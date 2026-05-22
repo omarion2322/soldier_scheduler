@@ -51,7 +51,7 @@ const EN: Dict = {
 const HE: Dict = {
   appTitle: 'מערכת שיבוץ חיילים',
   intro:
-    'סמנו כל משמרת כ"יכול" או "לא יכול". סמנו "בבית" כדי לסמן יום שלם כלא יכול.',
+    'סמנו כל משמרת כ״יכול״ או ״לא יכול״ אם יש אילוץ שמונע. סמנו ״בבית״ כדי לסמן יום שלם כלא יכול. מי שישן בבסיס, לסמן משמרת בוקר ביום שהוא חוזר ומשמרת לילה יום לפני שהוא יוצא ב״לא יכול״.',
   yourDetails: 'הפרטים שלך',
   name: 'שם',
   namePlaceholder: 'שם מלא',
@@ -93,12 +93,6 @@ const HE: Dict = {
 const DICTS: Record<Lang, Dict> = { en: EN, he: HE };
 
 function loadLang(): Lang {
-  try {
-    const v = localStorage.getItem(LANG_KEY);
-    if (v === 'en' || v === 'he') return v;
-  } catch {
-    /* ignore */
-  }
   return 'he';
 }
 

@@ -31,7 +31,7 @@ const initialShifts = (days: string[]): Record<string, DayShifts> => {
 };
 
 function AppInner() {
-  const { t, lang, setLang } = useI18n();
+  const { t } = useI18n();
   const weeks = useMemo(() => generateWeeks(), []);
   const [index, setIndex] = useState(() => getCurrentWeekIndex(new Date(), weeks));
   const week = weeks[index]!;
@@ -212,19 +212,9 @@ function AppInner() {
 
   return (
     <div className="mx-auto flex min-h-full max-w-xl flex-col bg-slate-50">
-      <header className="flex items-start justify-between gap-3 px-4 pb-2 pt-4">
-        <div>
-          <h1 className="text-2xl font-bold">{t('appTitle')}</h1>
-          <p className="text-sm text-slate-600">{t('intro')}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setLang(lang === 'en' ? 'he' : 'en')}
-          className="shrink-0 rounded-lg bg-white px-3 py-2 text-sm font-medium shadow-sm ring-1 ring-slate-200"
-          aria-label={t('toggleLang')}
-        >
-          {t('toggleLang')}
-        </button>
+      <header className="px-4 pb-2 pt-4 text-center">
+        <h1 className="text-2xl font-bold">{t('appTitle')}</h1>
+        <p className="mt-1 text-sm text-slate-600">{t('intro')}</p>
       </header>
 
       <IdentityForm
