@@ -37,6 +37,6 @@ export interface Week {
 
 export interface ApiResponse {
   ok: boolean;
-  reason?: 'deadline_passed' | 'invalid' | 'server_error';
+  reason?: 'invalid' | 'server_error';
   submission?: Submission;
 }

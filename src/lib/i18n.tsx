@@ -9,7 +9,7 @@ type Dict = Record<string, string>;
 const EN: Dict = {
   appTitle: 'Soldier Scheduler',
   intro:
-    'Mark each shift as Can or Can’t. Tap "At Home" to mark a full day as Can’t. Submit by Sunday 00:00 (Asia/Jerusalem).',
+    'Mark each shift as Can or Can’t. Tap "At Home" to mark a full day as Can’t.',
   yourDetails: 'Your details',
   name: 'Name',
   namePlaceholder: 'Full name',
@@ -42,8 +42,6 @@ const EN: Dict = {
   loadFailed: 'Failed to load your previous answers.',
   submittedOk: 'Submitted. Thanks!',
   submitFailed: 'Submission failed. Try again.',
-  deadlinePassed: 'The deadline for this week has passed. You can view but not submit.',
-  deadlineError: 'Deadline passed for this week.',
   missingIdentity: 'Please enter your name and phone.',
   toggleLang: 'עברית',
 };
@@ -51,7 +49,7 @@ const EN: Dict = {
 const HE: Dict = {
   appTitle: 'מערכת שיבוץ חיילים',
   intro:
-    'סמנו כל משמרת כ"יכול" או "לא יכול". סמנו "בבית" כדי לסמן יום שלם כלא יכול. ההגשה עד יום ראשון 00:00 (אסיה/ירושלים).',
+    'סמנו כל משמרת כ"יכול" או "לא יכול". סמנו "בבית" כדי לסמן יום שלם כלא יכול.',
   yourDetails: 'הפרטים שלך',
   name: 'שם',
   namePlaceholder: 'שם מלא',
@@ -84,8 +82,6 @@ const HE: Dict = {
   loadFailed: 'טעינת התשובות הקודמות נכשלה.',
   submittedOk: 'נשלח. תודה!',
   submitFailed: 'השליחה נכשלה. נסה שוב.',
-  deadlinePassed: 'המועד האחרון לשבוע הזה עבר. אפשר לצפות אך לא לשלוח.',
-  deadlineError: 'המועד האחרון לשבוע הזה עבר.',
   missingIdentity: 'נא להזין שם וטלפון.',
   toggleLang: 'English',
 };

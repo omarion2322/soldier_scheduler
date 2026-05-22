@@ -5,7 +5,6 @@ import {
   cycleShiftState,
   formatDayShort,
   formatWeekRange,
-  isPastDeadline,
   addDays,
 } from './schedule';
 
@@ -90,18 +89,5 @@ describe('formatters', () => {
 describe('addDays', () => {
   it('adds days across month boundary', () => {
     expect(addDays('2026-05-30', 5)).toBe('2026-06-04');
-  });
-});
-
-describe('isPastDeadline (Asia/Jerusalem, DST = +03:00)', () => {
-  const weekStart = '2026-05-26';
-  // Deadline = Sun 2026-05-31 00:00 Jerusalem = Sat 2026-05-30 21:00 UTC.
-
-  it('not past at Sat 18:00 UTC (Sat 21:00 Jerusalem)', () => {
-    expect(isPastDeadline(weekStart, new Date('2026-05-30T18:00:00Z'))).toBe(false);
-  });
-
-  it('past at Sat 22:00 UTC (Sun 01:00 Jerusalem)', () => {
-    expect(isPastDeadline(weekStart, new Date('2026-05-30T22:00:00Z'))).toBe(true);
   });
 });

@@ -19,7 +19,7 @@ export async function fetchSubmission(
 }
 
 /**
- * Submits/updates the submission. Apps Script enforces the deadline server-side.
+ * Submits/updates the submission.
  * We POST as text/plain to avoid a CORS preflight (Apps Script supports this).
  */
 export async function postSubmission(submission: Submission): Promise<ApiResponse> {

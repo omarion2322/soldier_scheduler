@@ -8,7 +8,6 @@ import {
   emptyDayShifts,
   generateWeeks,
   getCurrentWeekIndex,
-  isPastDeadline,
   normalizeShifts,
 } from './lib/schedule';
 import type { DayShifts, Position, ShiftSlot, Submission } from './lib/types';
@@ -51,7 +50,6 @@ function AppInner() {
   const [loadMessage, setLoadMessage] = useState<string | null>(null);
 
   const normalizedPhone = normalizePhone(phone);
-  const pastDeadline = isPastDeadline(week.start, new Date());
 
   // When user navigates between weeks after authenticating, refresh from server.
   useEffect(() => {
@@ -152,10 +150,6 @@ function AppInner() {
       setToast({ kind: 'error', text: t('missingIdentity') });
       return;
     }
-    if (pastDeadline) {
-      setToast({ kind: 'error', text: t('deadlineError') });
-      return;
-    }
     setSubmitting(true);
     setToast(null);
     try {
@@ -175,8 +169,6 @@ function AppInner() {
       if (res.ok) {
         setToast({ kind: 'success', text: t('submittedOk') });
         clearDraft(normalizedPhone, week.start);
-      } else if (res.reason === 'deadline_passed') {
-        setToast({ kind: 'error', text: t('deadlineError') });
       } else {
         setToast({ kind: 'error', text: t('submitFailed') });
       }
@@ -225,17 +217,11 @@ function AppInner() {
         <>
           <WeekNav weeks={weeks} index={index} onChange={setIndex} />
 
-          {pastDeadline && (
-            <div className="mx-4 mb-2 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">
-              {t('deadlinePassed')}
-            </div>
-          )}
-
           <WeekView
             week={week}
             shifts={shifts}
             unavailableDays={unavailable}
-            readOnly={pastDeadline}
+            readOnly={false}
             onCycleShift={handleCycleShift}
             onToggleUnavailable={handleToggleUnavailable}
           />
@@ -243,7 +229,7 @@ function AppInner() {
           <SubmitBar
             onSubmit={handleSubmit}
             submitting={submitting}
-            disabled={pastDeadline || !name.trim() || !normalizedPhone || !position}
+            disabled={!name.trim() || !normalizedPhone || !position}
             message={toast?.text}
             messageTone={toast?.kind}
           />

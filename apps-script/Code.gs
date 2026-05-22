@@ -15,12 +15,9 @@
  * Endpoints:
  *   GET  ?phone=...&week=YYYY-MM-DD  -> { ok, submission|null }
  *   POST JSON Submission             -> { ok, reason? }
- *
- * The deadline is Sunday 00:00 Asia/Jerusalem of the submitted week.
  */
 
 const SHEET_ID = '1RQEXiMVyHqXV75j_gm0qT_1QobtC-TtNrwDxCYxyf2Q';
-const TIMEZONE = 'Asia/Jerusalem';
 
 const SCHEDULE_START_ISO = '2026-05-26';
 const SCHEDULE_END_ISO = '2026-07-18';
@@ -129,9 +126,6 @@ function doPost(e) {
     if (!weekIndexFor_(weekStart)) {
       return jsonResponse_({ ok: false, reason: 'invalid' });
     }
-    if (isPastDeadline_(weekStart)) {
-      return jsonResponse_({ ok: false, reason: 'deadline_passed' });
-    }
 
     const VALID_SLOTS = { morning: true, afternoon: true, night: true };
     const VALID_STATES = { can: true, cant: true };
@@ -238,11 +232,4 @@ function deleteRowsFor_(sheet, phone, weekStart) {
       sheet.deleteRow(i + 2);
     }
   }
-}
-
-function isPastDeadline_(weekStart) {
-  // weekStart is a Tuesday (YYYY-MM-DD). Deadline = weekStart + 5 days at 00:00 local.
-  const nowLocal = Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
-  const deadline = addDaysIso_(weekStart, 5);
-  return nowLocal >= deadline;
 }
