@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { WeekNav } from './components/WeekNav';
 import { WeekView } from './components/WeekView';
 import { IdentityForm } from './components/IdentityForm';
@@ -49,6 +49,7 @@ function AppInner() {
   const [toast, setToast] = useState<Toast>(null);
   const [loadMessage, setLoadMessage] = useState<string | null>(null);
   const [lockedWeeks, setLockedWeeks] = useState<Set<string>>(() => new Set());
+  const loadedKeyRef = useRef<string | null>(null);
 
   const normalizedPhone = normalizePhone(phone);
   const weekLocked = lockedWeeks.has(week.start);
@@ -68,6 +69,10 @@ function AppInner() {
   // When user navigates between weeks after authenticating, refresh from server.
   useEffect(() => {
     if (!authenticated || !normalizedPhone) return;
+    const key = `${normalizedPhone}|${week.start}`;
+    // handleContinue already loaded this (phone, week); don't clobber its state.
+    if (loadedKeyRef.current === key) return;
+    loadedKeyRef.current = key;
     const empty = initialShifts(week.days);
     const draft = loadDraft(normalizedPhone, week.start);
     if (draft) {
@@ -127,6 +132,7 @@ function AppInner() {
     if (!name.trim() || normalizedPhone.length !== 10 || !position) return;
     setLoading(true);
     setLoadMessage(null);
+    loadedKeyRef.current = `${normalizedPhone}|${week.start}`;
     try {
       const existing = await fetchSubmission(normalizedPhone, week.start);
       const empty = initialShifts(week.days);
@@ -156,6 +162,7 @@ function AppInner() {
     setAuthenticated(false);
     setLoadMessage(null);
     setToast(null);
+    loadedKeyRef.current = null;
   };
 
   const handleSubmit = async () => {
