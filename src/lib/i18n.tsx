@@ -99,7 +99,7 @@ function loadLang(): Lang {
   } catch {
     /* ignore */
   }
-  return 'en';
+  return 'he';
 }
 
 function saveLang(lang: Lang) {
