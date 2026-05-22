@@ -233,8 +233,6 @@ function doPost(e) {
     const lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
-      deleteRowsFor_(sheet, phone);
-
       const submittedAt = new Date().toISOString();
       const row = [submittedAt, phone, name, position, weekStart];
       days.forEach(function (d) {
@@ -249,7 +247,11 @@ function doPost(e) {
       row.push(atHomeDays);
 
       const headers = buildHeaders_(weekStart);
-      sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row]);
+      // Collapse any duplicate rows for this phone, then overwrite the single
+      // remaining row in place (or append a new one if none existed).
+      let targetRow = collapseRowsFor_(sheet, phone);
+      if (!targetRow) targetRow = sheet.getLastRow() + 1;
+      sheet.getRange(targetRow, 1, 1, headers.length).setValues([row]);
     } finally {
       lock.releaseLock();
     }
@@ -273,7 +275,7 @@ function readSubmission_(phone, weekStart) {
   let latestTs = '';
   values.forEach(function (r) {
     const ts = String(r[0]);
-    if (String(r[1]) === phone && ts > latestTs) {
+    if (String(r[1]).trim() === String(phone).trim() && ts > latestTs) {
       row = r;
       latestTs = ts;
     }
@@ -309,12 +311,31 @@ function readSubmission_(phone, weekStart) {
   };
 }
 
+function collapseRowsFor_(sheet, phone) {
+  // Removes all but the first row whose phone column matches.
+  // Returns the row index of the surviving row, or 0 if none.
+  const last = sheet.getLastRow();
+  if (last < 2) return 0;
+  const phones = sheet.getRange(2, 2, last - 1, 1).getDisplayValues();
+  const target = String(phone).trim();
+  const matches = [];
+  for (let i = 0; i < phones.length; i += 1) {
+    if (String(phones[i][0]).trim() === target) matches.push(i + 2);
+  }
+  if (matches.length === 0) return 0;
+  for (let j = matches.length - 1; j >= 1; j -= 1) {
+    sheet.deleteRow(matches[j]);
+  }
+  return matches[0];
+}
+
 function deleteRowsFor_(sheet, phone) {
   const last = sheet.getLastRow();
   if (last < 2) return;
-  const phones = sheet.getRange(2, 2, last - 1, 1).getValues();
+  const phones = sheet.getRange(2, 2, last - 1, 1).getDisplayValues();
+  const target = String(phone).trim();
   for (let i = phones.length - 1; i >= 0; i -= 1) {
-    if (String(phones[i][0]) === phone) {
+    if (String(phones[i][0]).trim() === target) {
       sheet.deleteRow(i + 2);
     }
   }
