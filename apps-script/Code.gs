@@ -91,7 +91,7 @@ function buildHeaders_(weekStart) {
   const headers = FIXED_HEADERS.slice();
   weekDaysFor_(weekStart).forEach(function (d) {
     SLOTS.forEach(function (slot) {
-      headers.push(d + ' ' + slot);
+      headers.push(d.slice(5) + ' ' + slot);
     });
   });
   return headers.concat(TRAILING_HEADERS);
@@ -235,23 +235,33 @@ function doPost(e) {
     try {
       const submittedAt = new Date().toISOString();
       const row = [submittedAt, phone, name, position, weekStart];
+      const shiftStates = [];
       days.forEach(function (d) {
         const day = shiftsIn[d] || {};
         SLOTS.forEach(function (slot) {
           let state = day[slot] || 'can';
           if (!VALID_STATES[state]) state = 'can';
-          row.push(state);
+          shiftStates.push(state);
+          row.push(state === 'can' ? 1 : 0);
         });
       });
       const atHomeDays = Object.keys(unavailableSet).sort().join(', ');
       row.push(atHomeDays);
 
       const headers = buildHeaders_(weekStart);
-      // Collapse any duplicate rows for this phone, then overwrite the single
-      // remaining row in place (or append a new one if none existed).
       let targetRow = collapseRowsFor_(sheet, phone);
       if (!targetRow) targetRow = sheet.getLastRow() + 1;
       sheet.getRange(targetRow, 1, 1, headers.length).setValues([row]);
+
+      const shiftCount = shiftStates.length;
+      if (shiftCount > 0) {
+        const shiftRange = sheet.getRange(targetRow, FIXED_HEADERS.length + 1, 1, shiftCount);
+        const colors = [shiftStates.map(function (s) {
+          return s === 'can' ? '#d9ead3' : '#f4cccc';
+        })];
+        shiftRange.setBackgrounds(colors);
+        shiftRange.setHorizontalAlignment('center');
+      }
     } finally {
       lock.releaseLock();
     }
@@ -288,8 +298,8 @@ function readSubmission_(phone, weekStart) {
   days.forEach(function (d) {
     const cells = {};
     SLOTS.forEach(function (slot) {
-      const v = String(row[col]);
-      cells[slot] = v === 'cant' ? 'cant' : 'can';
+      const v = String(row[col]).trim();
+      cells[slot] = (v === '0' || v === 'cant') ? 'cant' : 'can';
       col += 1;
     });
     shifts[d] = cells;
