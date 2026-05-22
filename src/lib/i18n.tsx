@@ -1,0 +1,148 @@
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+
+export type Lang = 'en' | 'he';
+
+const LANG_KEY = 'soldier_scheduler.lang';
+
+type Dict = Record<string, string>;
+
+const EN: Dict = {
+  appTitle: 'Soldier Scheduler',
+  intro:
+    'Mark each shift as Can or Can’t. Tap "At Home" to mark a full day as Can’t. Submit by Sunday 00:00 (Asia/Jerusalem).',
+  yourDetails: 'Your details',
+  name: 'Name',
+  namePlaceholder: 'Full name',
+  phone: 'Phone',
+  phonePlaceholder: '0501234567',
+  continue: 'Continue',
+  loading: 'Loading…',
+  change: 'Change',
+  weekOf: 'Week {n} of {total}',
+  prev: '← Prev',
+  next: 'Next →',
+  prevAria: 'Previous week',
+  nextAria: 'Next week',
+  unavailableAllDay: 'At Home',
+  morning: 'Morning',
+  afternoon: 'Afternoon',
+  night: 'Night',
+  statePrefer: 'Prefer',
+  stateCant: "Can't",
+  stateCan: 'Can',
+  submit: 'Submit',
+  submitting: 'Submitting…',
+  signInFirst: 'Enter your name and phone, then tap Continue to start.',
+  loadedPrev: 'Loaded your previous answers. Edit and submit again to update.',
+  noPrev: 'No previous submission found for this week. Starting fresh.',
+  loadFailed: 'Failed to load your previous answers.',
+  submittedOk: 'Submitted. Thanks!',
+  submitFailed: 'Submission failed. Try again.',
+  deadlinePassed: 'The deadline for this week has passed. You can view but not submit.',
+  deadlineError: 'Deadline passed for this week.',
+  missingIdentity: 'Please enter your name and phone.',
+  toggleLang: 'עברית',
+};
+
+const HE: Dict = {
+  appTitle: 'מערכת שיבוץ חיילים',
+  intro:
+    'סמנו כל משמרת כ"יכול" או "לא יכול". סמנו "בבית" כדי לסמן יום שלם כלא יכול. ההגשה עד יום ראשון 00:00 (אסיה/ירושלים).',
+  yourDetails: 'הפרטים שלך',
+  name: 'שם',
+  namePlaceholder: 'שם מלא',
+  phone: 'טלפון',
+  phonePlaceholder: '0501234567',
+  continue: 'המשך',
+  loading: 'טוען…',
+  change: 'שינוי',
+  weekOf: 'שבוע {n} מתוך {total}',
+  prev: 'הקודם →',
+  next: '← הבא',
+  prevAria: 'שבוע קודם',
+  nextAria: 'שבוע הבא',
+  unavailableAllDay: 'בבית',
+  morning: 'בוקר',
+  afternoon: 'צהריים',
+  night: 'לילה',
+  statePrefer: 'מעדיף',
+  stateCant: 'לא יכול',
+  stateCan: 'יכול',
+  submit: 'שליחה',
+  submitting: 'שולח…',
+  signInFirst: 'הזינו שם וטלפון, ולחצו "המשך" כדי להתחיל.',
+  loadedPrev: 'נטענו התשובות הקודמות שלך. ערוך ושלח שוב כדי לעדכן.',
+  noPrev: 'לא נמצאה הגשה קודמת לשבוע הזה. מתחילים מחדש.',
+  loadFailed: 'טעינת התשובות הקודמות נכשלה.',
+  submittedOk: 'נשלח. תודה!',
+  submitFailed: 'השליחה נכשלה. נסה שוב.',
+  deadlinePassed: 'המועד האחרון לשבוע הזה עבר. אפשר לצפות אך לא לשלוח.',
+  deadlineError: 'המועד האחרון לשבוע הזה עבר.',
+  missingIdentity: 'נא להזין שם וטלפון.',
+  toggleLang: 'English',
+};
+
+const DICTS: Record<Lang, Dict> = { en: EN, he: HE };
+
+function loadLang(): Lang {
+  try {
+    const v = localStorage.getItem(LANG_KEY);
+    if (v === 'en' || v === 'he') return v;
+  } catch {
+    /* ignore */
+  }
+  return 'en';
+}
+
+function saveLang(lang: Lang) {
+  try {
+    localStorage.setItem(LANG_KEY, lang);
+  } catch {
+    /* ignore */
+  }
+}
+
+interface I18nCtx {
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  t: (key: keyof typeof EN, vars?: Record<string, string | number>) => string;
+}
+
+const Ctx = createContext<I18nCtx | null>(null);
+
+export function I18nProvider({ children }: { children: ReactNode }) {
+  const [lang, setLangState] = useState<Lang>(() => loadLang());
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.documentElement.dir = lang === 'he' ? 'rtl' : 'ltr';
+  }, [lang]);
+
+  const value = useMemo<I18nCtx>(
+    () => ({
+      lang,
+      setLang: (l) => {
+        saveLang(l);
+        setLangState(l);
+      },
+      t: (key, vars) => {
+        let s = DICTS[lang][key] ?? EN[key] ?? String(key);
+        if (vars) {
+          for (const k of Object.keys(vars)) {
+            s = s.replace(new RegExp(`\\{${k}\\}`, 'g'), String(vars[k]));
+          }
+        }
+        return s;
+      },
+    }),
+    [lang],
+  );
+
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+export function useI18n(): I18nCtx {
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error('useI18n must be used inside I18nProvider');
+  return ctx;
+}
