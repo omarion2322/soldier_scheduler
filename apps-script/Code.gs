@@ -6,7 +6,13 @@
  *   2. Paste this file's contents into Code.gs.
  *   3. SHEET_ID below is already set to the project sheet.
  *   4. Each submitted week is written to its own tab named e.g. "Week 1 (May 26-Jun 1)".
- *      Tabs are created automatically on first submission for that week.
+ *      One row per soldier per week. Columns:
+ *        submittedAt | phone | name | position | weekStart |
+ *        <YYYY-MM-DD slot> for each (day, slot) in that week (15 or 21 cols) |
+ *        atHomeDays
+ *      Resubmissions overwrite the existing row for that phone.
+ *      Tabs are created automatically; if a tab from an older format is detected
+ *      the script wipes it and writes the new headers.
  *   5. Deploy > New deployment > type "Web app".
  *        Execute as: Me
  *        Who has access: Anyone
@@ -29,17 +35,9 @@ const LOCKS_TAB = 'locks';
 const SCHEDULE_START_ISO = '2026-05-26';
 const SCHEDULE_END_ISO = '2026-07-18';
 
-const HEADERS = [
-  'submittedAt',
-  'phone',
-  'name',
-  'position',
-  'weekStart',
-  'date',
-  'slot',
-  'state',
-  'unavailableDay',
-];
+const FIXED_HEADERS = ['submittedAt', 'phone', 'name', 'position', 'weekStart'];
+const SLOTS = ['morning', 'afternoon', 'night'];
+const TRAILING_HEADERS = ['atHomeDays'];
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -79,18 +77,60 @@ function tabNameFor_(weekStart) {
   return 'Week ' + idx + ' (' + formatMonthDay_(weekStart) + '-' + formatMonthDay_(end) + ')';
 }
 
+function weekDaysFor_(weekStart) {
+  const days = [];
+  for (let i = 0; i < 7; i += 1) {
+    const d = addDaysIso_(weekStart, i);
+    if (d > SCHEDULE_END_ISO) break;
+    days.push(d);
+  }
+  return days;
+}
+
+function buildHeaders_(weekStart) {
+  const headers = FIXED_HEADERS.slice();
+  weekDaysFor_(weekStart).forEach(function (d) {
+    SLOTS.forEach(function (slot) {
+      headers.push(d + ' ' + slot);
+    });
+  });
+  return headers.concat(TRAILING_HEADERS);
+}
+
+function writeHeaders_(sheet, headers) {
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.setFrozenRows(1);
+}
+
+function headersMatch_(sheet, headers) {
+  const lastCol = sheet.getLastColumn();
+  if (lastCol !== headers.length) return false;
+  const existing = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+  for (let i = 0; i < headers.length; i += 1) {
+    if (String(existing[i]) !== headers[i]) return false;
+  }
+  return true;
+}
+
 function getWeekSheet_(weekStart) {
   const name = tabNameFor_(weekStart);
   if (!name) return null;
+  const headers = buildHeaders_(weekStart);
   const ss = SpreadsheetApp.openById(SHEET_ID);
   let sheet = ss.getSheetByName(name);
   if (!sheet) {
     sheet = ss.insertSheet(name);
-    sheet.appendRow(HEADERS);
-    sheet.setFrozenRows(1);
-  } else if (sheet.getLastRow() === 0) {
-    sheet.appendRow(HEADERS);
-    sheet.setFrozenRows(1);
+    writeHeaders_(sheet, headers);
+    return sheet;
+  }
+  if (sheet.getLastRow() === 0 || sheet.getLastColumn() === 0) {
+    writeHeaders_(sheet, headers);
+    return sheet;
+  }
+  if (!headersMatch_(sheet, headers)) {
+    // Old format detected — wipe and re-init. Existing data in old format is dropped.
+    sheet.clear();
+    writeHeaders_(sheet, headers);
   }
   return sheet;
 }
@@ -177,40 +217,39 @@ function doPost(e) {
       return jsonResponse_({ ok: false, reason: 'locked' });
     }
 
-    const VALID_SLOTS = { morning: true, afternoon: true, night: true };
     const VALID_STATES = { can: true, cant: true };
     const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
     const sheet = getWeekSheet_(weekStart);
     if (!sheet) return jsonResponse_({ ok: false, reason: 'invalid' });
 
+    const days = weekDaysFor_(weekStart);
+    const shiftsIn = body.shifts || {};
+    const unavailableSet = {};
+    (body.unavailableDays || []).forEach(function (d) {
+      if (ISO_DATE.test(String(d))) unavailableSet[d] = true;
+    });
+
     const lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
-      deleteRowsFor_(sheet, phone, weekStart);
+      deleteRowsFor_(sheet, phone);
 
       const submittedAt = new Date().toISOString();
-      const rows = [];
-      const shifts = body.shifts || {};
-      Object.keys(shifts).forEach(function (date) {
-        if (!ISO_DATE.test(date)) return;
-        const day = shifts[date] || {};
-        ['morning', 'afternoon', 'night'].forEach(function (slot) {
-          if (!VALID_SLOTS[slot]) return;
+      const row = [submittedAt, phone, name, position, weekStart];
+      days.forEach(function (d) {
+        const day = shiftsIn[d] || {};
+        SLOTS.forEach(function (slot) {
           let state = day[slot] || 'can';
           if (!VALID_STATES[state]) state = 'can';
-          rows.push([submittedAt, phone, name, position, weekStart, date, slot, state, '']);
+          row.push(state);
         });
       });
-      (body.unavailableDays || []).forEach(function (d) {
-        if (ISO_DATE.test(String(d))) {
-          rows.push([submittedAt, phone, name, position, weekStart, '', '', '', d]);
-        }
-      });
+      const atHomeDays = Object.keys(unavailableSet).sort().join(', ');
+      row.push(atHomeDays);
 
-      if (rows.length > 0) {
-        sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, HEADERS.length).setValues(rows);
-      }
+      const headers = buildHeaders_(weekStart);
+      sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setValues([row]);
     } finally {
       lock.releaseLock();
     }
@@ -226,59 +265,56 @@ function readSubmission_(phone, weekStart) {
   if (!sheet) return null;
   const last = sheet.getLastRow();
   if (last < 2) return null;
-  const values = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
+  const headers = buildHeaders_(weekStart);
+  const values = sheet.getRange(2, 1, last - 1, headers.length).getValues();
 
-  // Column order: submittedAt, phone, name, position, weekStart, date, slot, state, unavailableDay
-  const matching = values.filter(function (row) {
-    return String(row[1]) === phone && String(row[4]) === weekStart;
-  });
-  if (matching.length === 0) return null;
-
-  let latestSubmittedAt = '';
-  matching.forEach(function (row) {
-    const ts = String(row[0]);
-    if (ts > latestSubmittedAt) latestSubmittedAt = ts;
-  });
-  const latest = matching.filter(function (row) {
-    return String(row[0]) === latestSubmittedAt;
-  });
-
-  const shifts = {};
-  const unavailableDays = [];
-  let name = '';
-  let position = '';
-  latest.forEach(function (row) {
-    name = String(row[2]) || name;
-    position = String(row[3]) || position;
-    const date = String(row[5]);
-    const slot = String(row[6]);
-    const state = String(row[7]);
-    const unavail = String(row[8]);
-    if (unavail) {
-      unavailableDays.push(unavail);
-    } else if (date && slot) {
-      if (!shifts[date]) shifts[date] = { morning: 'can', afternoon: 'can', night: 'can' };
-      shifts[date][slot] = state;
+  // Column layout: submittedAt | phone | name | position | weekStart | <3*N slot cells> | atHomeDays
+  let row = null;
+  let latestTs = '';
+  values.forEach(function (r) {
+    const ts = String(r[0]);
+    if (String(r[1]) === phone && ts > latestTs) {
+      row = r;
+      latestTs = ts;
     }
   });
+  if (!row) return null;
+
+  const days = weekDaysFor_(weekStart);
+  const shifts = {};
+  let col = FIXED_HEADERS.length;
+  days.forEach(function (d) {
+    const cells = {};
+    SLOTS.forEach(function (slot) {
+      const v = String(row[col]);
+      cells[slot] = v === 'cant' ? 'cant' : 'can';
+      col += 1;
+    });
+    shifts[d] = cells;
+  });
+  const atHomeStr = String(row[col] || '');
+  const unavailableDays = atHomeStr
+    ? atHomeStr.split(',').map(function (s) { return s.trim(); })
+        .filter(function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); })
+    : [];
 
   return {
     phone: phone,
-    name: name,
-    position: position,
+    name: String(row[2]),
+    position: String(row[3]),
     weekStart: weekStart,
     unavailableDays: unavailableDays,
     shifts: shifts,
-    submittedAt: latestSubmittedAt,
+    submittedAt: latestTs,
   };
 }
 
-function deleteRowsFor_(sheet, phone, weekStart) {
+function deleteRowsFor_(sheet, phone) {
   const last = sheet.getLastRow();
   if (last < 2) return;
-  const values = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
-  for (let i = values.length - 1; i >= 0; i -= 1) {
-    if (String(values[i][1]) === phone && String(values[i][4]) === weekStart) {
+  const phones = sheet.getRange(2, 2, last - 1, 1).getValues();
+  for (let i = phones.length - 1; i >= 0; i -= 1) {
+    if (String(phones[i][0]) === phone) {
       sheet.deleteRow(i + 2);
     }
   }
