@@ -167,35 +167,81 @@ function jsonResponse_(obj) {
   );
 }
 
+function allWeekStarts_() {
+  const out = [];
+  let d = SCHEDULE_START_ISO;
+  while (d <= SCHEDULE_END_ISO) {
+    out.push(d);
+    d = addDaysIso_(d, 7);
+  }
+  return out;
+}
+
 function getLocksSheet_() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
+  const weeks = allWeekStarts_();
+  const headers = weeks.map(function (w) { return tabNameFor_(w) || w; });
+  const expectedCols = weeks.length + 1;
   let sheet = ss.getSheetByName(LOCKS_TAB);
   if (!sheet) {
     sheet = ss.insertSheet(LOCKS_TAB);
-    sheet.appendRow(['weekStart']);
-    sheet.setFrozenRows(1);
-  } else if (sheet.getLastRow() === 0) {
-    sheet.appendRow(['weekStart']);
-    sheet.setFrozenRows(1);
+    initLocksSheet_(sheet, headers);
+    return sheet;
+  }
+  // Detect old vertical format (col A header === 'weekStart' and 1 column),
+  // or any layout mismatch, and rebuild.
+  const firstCell = sheet.getRange(1, 1).getValue();
+  const lastCol = sheet.getLastColumn();
+  if (
+    lastCol !== expectedCols ||
+    String(firstCell).toLowerCase() === 'weekstart' ||
+    String(sheet.getRange(2, 1).getValue()).toLowerCase() !== 'lock'
+  ) {
+    sheet.clear();
+    sheet.clearDataValidations();
+    initLocksSheet_(sheet, headers);
+  } else {
+    // Ensure headers in row 1 match the schedule (in case the schedule changed).
+    const existing = sheet.getRange(1, 2, 1, weeks.length).getValues()[0];
+    let mismatch = false;
+    for (let i = 0; i < headers.length; i += 1) {
+      if (String(existing[i]) !== headers[i]) { mismatch = true; break; }
+    }
+    if (mismatch) {
+      sheet.getRange(1, 2, 1, weeks.length).setValues([headers]);
+    }
   }
   return sheet;
 }
 
+function initLocksSheet_(sheet, headers) {
+  const weekCount = headers.length;
+  sheet.getRange(1, 1).setValue('').setFontWeight('bold');
+  sheet.getRange(1, 2, 1, weekCount).setValues([headers])
+    .setFontWeight('bold').setBackground('#cfe2f3').setHorizontalAlignment('center');
+  sheet.getRange(2, 1).setValue('lock').setFontWeight('bold').setBackground('#f3f3f3');
+  const lockRow = sheet.getRange(2, 2, 1, weekCount);
+  lockRow.setValues([headers.map(function () { return 'No'; })]);
+  lockRow.setHorizontalAlignment('center');
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(['Yes', 'No'], true)
+    .setAllowInvalid(false)
+    .build();
+  lockRow.setDataValidation(rule);
+  sheet.setFrozenRows(1);
+  sheet.setFrozenColumns(1);
+  sheet.autoResizeColumns(1, weekCount + 1);
+}
+
 function getLockedWeeks_() {
   const sheet = getLocksSheet_();
-  const last = sheet.getLastRow();
-  if (last < 2) return {};
-  const values = sheet.getRange(2, 1, last - 1, 1).getValues();
+  const weeks = allWeekStarts_();
+  if (weeks.length === 0) return {};
+  const row = sheet.getRange(2, 2, 1, weeks.length).getValues()[0];
   const set = {};
-  values.forEach(function (row) {
-    let v = row[0];
-    if (v instanceof Date) {
-      v = Utilities.formatDate(v, 'UTC', 'yyyy-MM-dd');
-    } else {
-      v = String(v).trim();
-    }
-    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) set[v] = true;
-  });
+  for (let i = 0; i < weeks.length; i += 1) {
+    if (String(row[i]).trim().toLowerCase() === 'yes') set[weeks[i]] = true;
+  }
   return set;
 }
 
