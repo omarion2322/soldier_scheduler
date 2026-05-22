@@ -488,39 +488,123 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
   }
 
   // Write blocks per day, stacked vertically.
+  sheet.setRightToLeft(true);
+
+  const COL_TIME = 1;
+  const COL_MEFAKED = 2;
+  const COL_SAMBATZ = 3;
+  const TOTAL_COLS = 3;
+
+  const COLOR_TITLE_BG = '#1f3a5f';
+  const COLOR_TITLE_FG = '#ffffff';
+  const COLOR_DAY_BG = '#2f5d8e';
+  const COLOR_DAY_FG = '#ffffff';
+  const COLOR_POS_BG = '#cfe2f3';
+  const COLOR_TIME_BG = '#f3f3f3';
+  const COLOR_BAND_A = '#ffffff';
+  const COLOR_BAND_B = '#f8fafc';
+  const COLOR_BORDER = '#9aa0a6';
+
   let curRow = 1;
   const idx = weekIndexFor_(weekStart);
-  sheet.getRange(curRow, 1).setValue('Week ' + idx + ' Shifts').setFontWeight('bold').setFontSize(14);
-  curRow += 2;
+  const fullEnd = addDaysIso_(weekStart, 6);
+  const end = fullEnd <= SCHEDULE_END_ISO ? fullEnd : SCHEDULE_END_ISO;
+  const titleText = 'שבוע ' + idx + ' — שיבוץ (' + isoToDDMM_(weekStart) + '–' + isoToDDMM_(end) + ')';
+
+  const titleRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
+  titleRange.merge();
+  titleRange.setValue(titleText);
+  titleRange.setBackground(COLOR_TITLE_BG)
+    .setFontColor(COLOR_TITLE_FG)
+    .setFontWeight('bold')
+    .setFontSize(16)
+    .setHorizontalAlignment('center')
+    .setVerticalAlignment('middle');
+  sheet.setRowHeight(curRow, 36);
+  curRow += 1;
+
+  sheet.setRowHeight(curRow, 8); // spacer
+  curRow += 1;
 
   days.forEach(function (d) {
     const dayDate = new Date(d + 'T00:00:00Z');
     const dayName = DAY_NAMES_HE[dayDate.getUTCDay()];
 
-    sheet.getRange(curRow, 1).setValue(isoToDDMM_(d) + ' (' + dayName + ')')
-      .setFontWeight('bold').setBackground('#e8eaed');
-    sheet.getRange(curRow, 1, 1, 3).setBackground('#e8eaed');
+    // Day header row (merged across all columns)
+    const dayHeaderRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
+    dayHeaderRange.merge();
+    dayHeaderRange.setValue('יום ' + dayName + ' · ' + isoToDDMM_(d));
+    dayHeaderRange.setBackground(COLOR_DAY_BG)
+      .setFontColor(COLOR_DAY_FG)
+      .setFontWeight('bold')
+      .setFontSize(13)
+      .setHorizontalAlignment('center')
+      .setVerticalAlignment('middle');
+    sheet.setRowHeight(curRow, 30);
     curRow += 1;
 
-    sheet.getRange(curRow, 2, 1, 2)
-      .setValues([[POSITION_LABELS_HE.mefaked_haml, POSITION_LABELS_HE.sambatz]])
-      .setFontWeight('bold').setHorizontalAlignment('center');
+    // Position label row
+    const posRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
+    posRange.setValues([['', POSITION_LABELS_HE.mefaked_haml, POSITION_LABELS_HE.sambatz]]);
+    posRange.setBackground(COLOR_POS_BG)
+      .setFontWeight('bold')
+      .setFontSize(12)
+      .setHorizontalAlignment('center')
+      .setVerticalAlignment('middle');
+    sheet.setRowHeight(curRow, 26);
     curRow += 1;
 
-    SLOTS.forEach(function (slot) {
-      sheet.getRange(curRow, 1).setValue(SHIFT_TIME_LABELS[slot]).setFontWeight('bold');
-      sheet.getRange(curRow, 2).setValue(avail[d][slot].mefaked_haml.join('\n'))
-        .setWrap(true).setVerticalAlignment('top');
-      sheet.getRange(curRow, 3).setValue(avail[d][slot].sambatz.join('\n'))
-        .setWrap(true).setVerticalAlignment('top');
+    const slotStartRow = curRow;
+    SLOTS.forEach(function (slot, slotIdx) {
+      const mefakedNames = avail[d][slot].mefaked_haml;
+      const sambatzNames = avail[d][slot].sambatz;
+      const rowValues = [[
+        SHIFT_TIME_LABELS[slot],
+        mefakedNames.join('\n'),
+        sambatzNames.join('\n'),
+      ]];
+      const rowRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
+      rowRange.setValues(rowValues);
+      rowRange.setVerticalAlignment('middle')
+        .setHorizontalAlignment('center')
+        .setWrap(true)
+        .setFontSize(11);
+
+      const bandColor = slotIdx % 2 === 0 ? COLOR_BAND_A : COLOR_BAND_B;
+      sheet.getRange(curRow, COL_MEFAKED, 1, 2).setBackground(bandColor);
+      sheet.getRange(curRow, COL_TIME)
+        .setBackground(COLOR_TIME_BG)
+        .setFontWeight('bold')
+        .setFontSize(11);
+
+      // Row height grows with the larger of the two name lists.
+      const maxNames = Math.max(1, mefakedNames.length, sambatzNames.length);
+      sheet.setRowHeight(curRow, Math.max(36, 18 + maxNames * 18));
+
       curRow += 1;
     });
+    const slotEndRow = curRow - 1;
 
+    // Border around the day block (day header + position labels + slot rows).
+    const blockRange = sheet.getRange(curRow - SLOTS.length - 2, 1, SLOTS.length + 2, TOTAL_COLS);
+    blockRange.setBorder(true, true, true, true, false, false, COLOR_BORDER,
+      SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+    // Inner horizontal separators between slot rows.
+    sheet.getRange(slotStartRow, 1, SLOTS.length, TOTAL_COLS)
+      .setBorder(null, null, null, null, false, true, '#dadce0',
+        SpreadsheetApp.BorderStyle.SOLID);
+    // Vertical separator between position columns.
+    sheet.getRange(slotStartRow - 1, COL_MEFAKED, SLOTS.length + 1, 2)
+      .setBorder(null, null, null, null, true, false, '#dadce0',
+        SpreadsheetApp.BorderStyle.SOLID);
+
+    sheet.setRowHeight(curRow, 10); // spacer between days
     curRow += 1;
   });
 
-  sheet.setColumnWidth(1, 110);
-  sheet.setColumnWidth(2, 180);
-  sheet.setColumnWidth(3, 220);
+  sheet.setColumnWidth(COL_TIME, 130);
+  sheet.setColumnWidth(COL_MEFAKED, 200);
+  sheet.setColumnWidth(COL_SAMBATZ, 260);
   sheet.setFrozenRows(1);
+  sheet.setHiddenGridlines(true);
 }
