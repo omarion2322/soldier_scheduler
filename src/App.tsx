@@ -11,7 +11,7 @@ import {
   isPastDeadline,
   normalizeShifts,
 } from './lib/schedule';
-import type { DayShifts, ShiftSlot, Submission } from './lib/types';
+import type { DayShifts, Position, ShiftSlot, Submission } from './lib/types';
 import {
   clearDraft,
   loadDraft,
@@ -40,6 +40,7 @@ function AppInner() {
   const cached = useMemo(() => loadIdentity(), []);
   const [name, setName] = useState(cached?.name ?? '');
   const [phone, setPhone] = useState(() => (cached?.phone ?? '').replace(/\D/g, '').slice(0, 10));
+  const [position, setPosition] = useState<Position | ''>(cached?.position ?? '');
   const [authenticated, setAuthenticated] = useState(false);
 
   const [shifts, setShifts] = useState<Record<string, DayShifts>>(() => initialShifts(week.days));
@@ -89,8 +90,8 @@ function AppInner() {
 
   // Persist identity locally for convenience.
   useEffect(() => {
-    if (name || phone) saveIdentity({ name, phone });
-  }, [name, phone]);
+    if (name || phone || position) saveIdentity({ name, phone, position: position || undefined });
+  }, [name, phone, position]);
 
   const handleCycleShift = (date: string, slot: ShiftSlot) => {
     if (!authenticated || unavailable.has(date)) return;
@@ -111,7 +112,7 @@ function AppInner() {
   };
 
   const handleContinue = async () => {
-    if (!name.trim() || normalizedPhone.length !== 10) return;
+    if (!name.trim() || normalizedPhone.length !== 10 || !position) return;
     setLoading(true);
     setLoadMessage(null);
     try {
@@ -120,6 +121,7 @@ function AppInner() {
       if (existing) {
         setShifts({ ...empty, ...normalizeShifts(existing.shifts) });
         setUnavailable(new Set(existing.unavailableDays));
+        if (existing.position) setPosition(existing.position);
         setLoadMessage(t('loadedPrev'));
       } else {
         setShifts(empty);
@@ -146,7 +148,7 @@ function AppInner() {
 
   const handleSubmit = async () => {
     if (!authenticated) return;
-    if (!normalizedPhone || !name.trim()) {
+    if (!normalizedPhone || !name.trim() || !position) {
       setToast({ kind: 'error', text: t('missingIdentity') });
       return;
     }
@@ -164,6 +166,7 @@ function AppInner() {
       const submission: Submission = {
         phone: normalizedPhone,
         name: name.trim(),
+        position: position as Position,
         weekStart: week.start,
         unavailableDays: Array.from(unavailable),
         shifts: finalShifts,
@@ -207,9 +210,11 @@ function AppInner() {
       <IdentityForm
         name={name}
         phone={phone}
+        position={position}
         locked={authenticated}
         onNameChange={setName}
         onPhoneChange={setPhone}
+        onPositionChange={setPosition}
         onContinue={handleContinue}
         onChange={handleChangeIdentity}
         loading={loading}
@@ -238,7 +243,7 @@ function AppInner() {
           <SubmitBar
             onSubmit={handleSubmit}
             submitting={submitting}
-            disabled={pastDeadline || !name.trim() || !normalizedPhone}
+            disabled={pastDeadline || !name.trim() || !normalizedPhone || !position}
             message={toast?.text}
             messageTone={toast?.kind}
           />
