@@ -14,10 +14,17 @@
  *
  * Endpoints:
  *   GET  ?phone=...&week=YYYY-MM-DD  -> { ok, submission|null }
+ *   GET  ?mode=locks                 -> { ok, lockedWeeks: ['YYYY-MM-DD', ...] }
  *   POST JSON Submission             -> { ok, reason? }
+ *
+ * Locking weeks:
+ *   Add a tab named "locks" to the spreadsheet. Column A header: weekStart.
+ *   Each subsequent row holds a Tuesday YYYY-MM-DD that should be read-only.
+ *   The script creates this tab automatically on first request if missing.
  */
 
 const SHEET_ID = '1RQEXiMVyHqXV75j_gm0qT_1QobtC-TtNrwDxCYxyf2Q';
+const LOCKS_TAB = 'locks';
 
 const SCHEDULE_START_ISO = '2026-05-26';
 const SCHEDULE_END_ISO = '2026-07-18';
@@ -94,8 +101,48 @@ function jsonResponse_(obj) {
   );
 }
 
+function getLocksSheet_() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sheet = ss.getSheetByName(LOCKS_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(LOCKS_TAB);
+    sheet.appendRow(['weekStart']);
+    sheet.setFrozenRows(1);
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(['weekStart']);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function getLockedWeeks_() {
+  const sheet = getLocksSheet_();
+  const last = sheet.getLastRow();
+  if (last < 2) return {};
+  const values = sheet.getRange(2, 1, last - 1, 1).getValues();
+  const set = {};
+  values.forEach(function (row) {
+    let v = row[0];
+    if (v instanceof Date) {
+      v = Utilities.formatDate(v, 'UTC', 'yyyy-MM-dd');
+    } else {
+      v = String(v).trim();
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) set[v] = true;
+  });
+  return set;
+}
+
+function isWeekLocked_(weekStart) {
+  return Boolean(getLockedWeeks_()[weekStart]);
+}
+
 function doGet(e) {
   try {
+    const mode = (e && e.parameter && e.parameter.mode) || '';
+    if (mode === 'locks') {
+      return jsonResponse_({ ok: true, lockedWeeks: Object.keys(getLockedWeeks_()) });
+    }
     const phone = (e && e.parameter && e.parameter.phone) || '';
     const week = (e && e.parameter && e.parameter.week) || '';
     if (!phone || !week) {
@@ -125,6 +172,9 @@ function doPost(e) {
     }
     if (!weekIndexFor_(weekStart)) {
       return jsonResponse_({ ok: false, reason: 'invalid' });
+    }
+    if (isWeekLocked_(weekStart)) {
+      return jsonResponse_({ ok: false, reason: 'locked' });
     }
 
     const VALID_SLOTS = { morning: true, afternoon: true, night: true };

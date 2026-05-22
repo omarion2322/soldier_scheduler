@@ -19,7 +19,7 @@ import {
   saveDraft,
   saveIdentity,
 } from './lib/storage';
-import { fetchSubmission, postSubmission } from './lib/api';
+import { fetchLockedWeeks, fetchSubmission, postSubmission } from './lib/api';
 import { I18nProvider, useI18n } from './lib/i18n';
 
 type Toast = { kind: 'success' | 'error' | 'info'; text: string } | null;
@@ -48,8 +48,22 @@ function AppInner() {
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
   const [loadMessage, setLoadMessage] = useState<string | null>(null);
+  const [lockedWeeks, setLockedWeeks] = useState<Set<string>>(() => new Set());
 
   const normalizedPhone = normalizePhone(phone);
+  const weekLocked = lockedWeeks.has(week.start);
+
+  // Load admin-controlled lock list once on mount; refresh on auth.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const list = await fetchLockedWeeks();
+      if (!cancelled) setLockedWeeks(new Set(list));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticated]);
 
   // When user navigates between weeks after authenticating, refresh from server.
   useEffect(() => {
@@ -92,7 +106,7 @@ function AppInner() {
   }, [name, phone, position]);
 
   const handleCycleShift = (date: string, slot: ShiftSlot) => {
-    if (!authenticated || unavailable.has(date)) return;
+    if (!authenticated || weekLocked || unavailable.has(date)) return;
     setShifts((prev) => {
       const day = prev[date] ?? emptyDayShifts();
       return { ...prev, [date]: { ...day, [slot]: cycleShiftState(day[slot]) } };
@@ -100,7 +114,7 @@ function AppInner() {
   };
 
   const handleToggleUnavailable = (date: string) => {
-    if (!authenticated) return;
+    if (!authenticated || weekLocked) return;
     setUnavailable((prev) => {
       const next = new Set(prev);
       if (next.has(date)) next.delete(date);
@@ -146,6 +160,10 @@ function AppInner() {
 
   const handleSubmit = async () => {
     if (!authenticated) return;
+    if (weekLocked) {
+      setToast({ kind: 'error', text: t('weekLockedError') });
+      return;
+    }
     if (!normalizedPhone || !name.trim() || !position) {
       setToast({ kind: 'error', text: t('missingIdentity') });
       return;
@@ -169,6 +187,9 @@ function AppInner() {
       if (res.ok) {
         setToast({ kind: 'success', text: t('submittedOk') });
         clearDraft(normalizedPhone, week.start);
+      } else if (res.reason === 'locked') {
+        setLockedWeeks((prev) => new Set(prev).add(week.start));
+        setToast({ kind: 'error', text: t('weekLockedError') });
       } else {
         setToast({ kind: 'error', text: t('submitFailed') });
       }
@@ -217,11 +238,17 @@ function AppInner() {
         <>
           <WeekNav weeks={weeks} index={index} onChange={setIndex} />
 
+          {weekLocked && (
+            <div className="mx-4 mb-2 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">
+              {t('weekLocked')}
+            </div>
+          )}
+
           <WeekView
             week={week}
             shifts={shifts}
             unavailableDays={unavailable}
-            readOnly={false}
+            readOnly={weekLocked}
             onCycleShift={handleCycleShift}
             onToggleUnavailable={handleToggleUnavailable}
           />
@@ -229,7 +256,7 @@ function AppInner() {
           <SubmitBar
             onSubmit={handleSubmit}
             submitting={submitting}
-            disabled={!name.trim() || !normalizedPhone || !position}
+            disabled={weekLocked || !name.trim() || !normalizedPhone || !position}
             message={toast?.text}
             messageTone={toast?.kind}
           />

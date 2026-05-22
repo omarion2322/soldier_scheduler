@@ -42,6 +42,8 @@ const EN: Dict = {
   loadFailed: 'Failed to load your previous answers.',
   submittedOk: 'Submitted. Thanks!',
   submitFailed: 'Submission failed. Try again.',
+  weekLocked: 'This week is locked by the admin. You can view but not edit.',
+  weekLockedError: 'This week is locked. Submission rejected.',
   missingIdentity: 'Please enter your name and phone.',
   toggleLang: 'עברית',
 };
@@ -82,6 +84,8 @@ const HE: Dict = {
   loadFailed: 'טעינת התשובות הקודמות נכשלה.',
   submittedOk: 'נשלח. תודה!',
   submitFailed: 'השליחה נכשלה. נסה שוב.',
+  weekLocked: 'השבוע הזה ננעל על ידי המנהל. אפשר לצפות אך לא לערוך.',
+  weekLockedError: 'השבוע הזה נעול. ההגשה נדחתה.',
   missingIdentity: 'נא להזין שם וטלפון.',
   toggleLang: 'English',
 };
