@@ -563,11 +563,21 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     const dayDate = new Date(d + 'T00:00:00Z');
     const dayName = DAY_NAMES_HE[dayDate.getUTCDay()];
 
-    // Day header row (merged across all columns)
-    const dayHeaderRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
-    dayHeaderRange.merge();
-    dayHeaderRange.setValue('יום ' + dayName + ' · ' + isoToDDMM_(d));
-    dayHeaderRange.setBackground(COLOR_DAY_BG)
+    // Day header row — duplicated above each table
+    const dayLabel = 'יום ' + dayName + ' · ' + isoToDDMM_(d);
+    const dayHeaderLeft = sheet.getRange(curRow, COL_TIME, 1, LEFT_COLS);
+    dayHeaderLeft.merge();
+    dayHeaderLeft.setValue(dayLabel)
+      .setBackground(COLOR_DAY_BG)
+      .setFontColor(COLOR_DAY_FG)
+      .setFontWeight('bold')
+      .setFontSize(13)
+      .setHorizontalAlignment('center')
+      .setVerticalAlignment('middle');
+    const dayHeaderRight = sheet.getRange(curRow, COL_TIME_R, 1, RIGHT_COLS);
+    dayHeaderRight.merge();
+    dayHeaderRight.setValue(dayLabel)
+      .setBackground(COLOR_DAY_BG)
       .setFontColor(COLOR_DAY_FG)
       .setFontWeight('bold')
       .setFontSize(13)
