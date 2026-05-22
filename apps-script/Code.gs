@@ -349,11 +349,14 @@ function collapseRowsFor_(sheet, phone) {
   // Returns the row index of the surviving row, or 0 if none.
   const last = sheet.getLastRow();
   if (last < 2) return 0;
-  const phones = sheet.getRange(2, 2, last - 1, 1).getDisplayValues();
-  const target = String(phone).trim();
+  const display = sheet.getRange(2, 2, last - 1, 1).getDisplayValues();
+  const raw = sheet.getRange(2, 2, last - 1, 1).getValues();
+  const target = String(phone).replace(/\D/g, '');
   const matches = [];
-  for (let i = 0; i < phones.length; i += 1) {
-    if (String(phones[i][0]).trim() === target) matches.push(i + 2);
+  for (let i = 0; i < display.length; i += 1) {
+    const d = String(display[i][0] || '').replace(/\D/g, '');
+    const r = String(raw[i][0] || '').replace(/\D/g, '');
+    if (target && (d === target || r === target)) matches.push(i + 2);
   }
   if (matches.length === 0) return 0;
   for (let j = matches.length - 1; j >= 1; j -= 1) {
@@ -365,10 +368,13 @@ function collapseRowsFor_(sheet, phone) {
 function deleteRowsFor_(sheet, phone) {
   const last = sheet.getLastRow();
   if (last < 2) return;
-  const phones = sheet.getRange(2, 2, last - 1, 1).getDisplayValues();
-  const target = String(phone).trim();
-  for (let i = phones.length - 1; i >= 0; i -= 1) {
-    if (String(phones[i][0]).trim() === target) {
+  const display = sheet.getRange(2, 2, last - 1, 1).getDisplayValues();
+  const raw = sheet.getRange(2, 2, last - 1, 1).getValues();
+  const target = String(phone).replace(/\D/g, '');
+  for (let i = display.length - 1; i >= 0; i -= 1) {
+    const d = String(display[i][0] || '').replace(/\D/g, '');
+    const r = String(raw[i][0] || '').replace(/\D/g, '');
+    if (target && (d === target || r === target)) {
       sheet.deleteRow(i + 2);
     }
   }
@@ -401,8 +407,25 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     const headers = buildHeaders_(weekStart);
     const totalCols = headers.length;
     const rows = dataSheet.getRange(2, 1, last - 1, totalCols).getValues();
+    const display = dataSheet.getRange(2, 1, last - 1, totalCols).getDisplayValues();
     const FIXED = FIXED_HEADERS.length;
-    rows.forEach(function (r) {
+
+    // Keep only the latest row per phone (by submittedAt).
+    const latestByPhone = {};
+    rows.forEach(function (r, i) {
+      const phoneDigits =
+        String(display[i][1] || '').replace(/\D/g, '') ||
+        String(r[1] || '').replace(/\D/g, '');
+      if (!phoneDigits) return;
+      const ts = String(r[0] || display[i][0] || '');
+      const cur = latestByPhone[phoneDigits];
+      if (!cur || ts > cur.ts) {
+        latestByPhone[phoneDigits] = { row: r, ts: ts };
+      }
+    });
+
+    Object.keys(latestByPhone).forEach(function (p) {
+      const r = latestByPhone[p].row;
       const name = String(r[2] || '').trim();
       const position = String(r[3] || '').trim();
       if (!name || positions.indexOf(position) === -1) return;
