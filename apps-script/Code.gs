@@ -39,6 +39,14 @@ const FIXED_HEADERS = ['submittedAt', 'phone', 'name', 'position', 'weekStart'];
 const SLOTS = ['morning', 'afternoon', 'night'];
 const TRAILING_HEADERS = ['atHomeDays'];
 
+const POSITION_LABELS_HE = { mefaked_haml: 'מפקד חמ״ל', sambatz: 'סמב״צ' };
+const SHIFT_TIME_LABELS = {
+  morning: '6:00-14:00',
+  afternoon: '14:00-22:00',
+  night: '22:00-6:00',
+};
+const DAY_NAMES_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -75,6 +83,19 @@ function tabNameFor_(weekStart) {
   const fullEnd = addDaysIso_(weekStart, 6);
   const end = fullEnd <= SCHEDULE_END_ISO ? fullEnd : SCHEDULE_END_ISO;
   return 'Week ' + idx + ' (' + formatMonthDay_(weekStart) + '-' + formatMonthDay_(end) + ')';
+}
+
+function shiftsTabNameFor_(weekStart) {
+  const idx = weekIndexFor_(weekStart);
+  if (!idx) return '';
+  const fullEnd = addDaysIso_(weekStart, 6);
+  const end = fullEnd <= SCHEDULE_END_ISO ? fullEnd : SCHEDULE_END_ISO;
+  return 'Week ' + idx + ' Shifts (' + formatMonthDay_(weekStart) + '-' + formatMonthDay_(end) + ')';
+}
+
+function isoToDDMM_(iso) {
+  const parts = iso.split('-');
+  return parts[2] + '/' + parts[1];
 }
 
 function weekDaysFor_(weekStart) {
@@ -262,6 +283,8 @@ function doPost(e) {
         shiftRange.setBackgrounds(colors);
         shiftRange.setHorizontalAlignment('center');
       }
+
+      rebuildShiftsTab_(sheet, weekStart);
     } finally {
       lock.releaseLock();
     }
@@ -349,4 +372,85 @@ function deleteRowsFor_(sheet, phone) {
       sheet.deleteRow(i + 2);
     }
   }
+}
+
+function rebuildShiftsTab_(dataSheet, weekStart) {
+  const tabName = shiftsTabNameFor_(weekStart);
+  if (!tabName) return;
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sheet = ss.getSheetByName(tabName);
+  if (!sheet) sheet = ss.insertSheet(tabName);
+  sheet.clear();
+  sheet.setHiddenGridlines(false);
+
+  const days = weekDaysFor_(weekStart);
+  const positions = ['mefaked_haml', 'sambatz'];
+
+  // Build availability map: avail[day][slot][position] = [names...]
+  const avail = {};
+  days.forEach(function (d) {
+    avail[d] = {};
+    SLOTS.forEach(function (s) {
+      avail[d][s] = {};
+      positions.forEach(function (p) { avail[d][s][p] = []; });
+    });
+  });
+
+  const last = dataSheet.getLastRow();
+  if (last >= 2) {
+    const headers = buildHeaders_(weekStart);
+    const totalCols = headers.length;
+    const rows = dataSheet.getRange(2, 1, last - 1, totalCols).getValues();
+    const FIXED = FIXED_HEADERS.length;
+    rows.forEach(function (r) {
+      const name = String(r[2] || '').trim();
+      const position = String(r[3] || '').trim();
+      if (!name || positions.indexOf(position) === -1) return;
+      days.forEach(function (d, dayIdx) {
+        SLOTS.forEach(function (slot, slotIdx) {
+          const v = String(r[FIXED + dayIdx * SLOTS.length + slotIdx]).trim();
+          if (v === '1' || v === 'can') {
+            avail[d][slot][position].push(name);
+          }
+        });
+      });
+    });
+  }
+
+  // Write blocks per day, stacked vertically.
+  let curRow = 1;
+  const idx = weekIndexFor_(weekStart);
+  sheet.getRange(curRow, 1).setValue('Week ' + idx + ' Shifts').setFontWeight('bold').setFontSize(14);
+  curRow += 2;
+
+  days.forEach(function (d) {
+    const dayDate = new Date(d + 'T00:00:00Z');
+    const dayName = DAY_NAMES_HE[dayDate.getUTCDay()];
+
+    sheet.getRange(curRow, 1).setValue(isoToDDMM_(d) + ' (' + dayName + ')')
+      .setFontWeight('bold').setBackground('#e8eaed');
+    sheet.getRange(curRow, 1, 1, 3).setBackground('#e8eaed');
+    curRow += 1;
+
+    sheet.getRange(curRow, 2, 1, 2)
+      .setValues([[POSITION_LABELS_HE.mefaked_haml, POSITION_LABELS_HE.sambatz]])
+      .setFontWeight('bold').setHorizontalAlignment('center');
+    curRow += 1;
+
+    SLOTS.forEach(function (slot) {
+      sheet.getRange(curRow, 1).setValue(SHIFT_TIME_LABELS[slot]).setFontWeight('bold');
+      sheet.getRange(curRow, 2).setValue(avail[d][slot].mefaked_haml.join('\n'))
+        .setWrap(true).setVerticalAlignment('top');
+      sheet.getRange(curRow, 3).setValue(avail[d][slot].sambatz.join('\n'))
+        .setWrap(true).setVerticalAlignment('top');
+      curRow += 1;
+    });
+
+    curRow += 1;
+  });
+
+  sheet.setColumnWidth(1, 110);
+  sheet.setColumnWidth(2, 180);
+  sheet.setColumnWidth(3, 220);
+  sheet.setFrozenRows(1);
 }
