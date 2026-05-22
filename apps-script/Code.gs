@@ -204,6 +204,17 @@ function doGet(e) {
     if (mode === 'locks') {
       return jsonResponse_({ ok: true, lockedWeeks: Object.keys(getLockedWeeks_()) });
     }
+    if (mode === 'dedupe') {
+      const week = (e && e.parameter && e.parameter.week) || '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || !weekIndexFor_(week)) {
+        return jsonResponse_({ ok: false, reason: 'invalid' });
+      }
+      const sheet = getWeekSheet_(week);
+      if (!sheet) return jsonResponse_({ ok: false, reason: 'invalid' });
+      const removed = dedupeAllPhones_(sheet);
+      rebuildShiftsTab_(sheet, week);
+      return jsonResponse_({ ok: true, removed: removed });
+    }
     const phone = (e && e.parameter && e.parameter.phone) || '';
     const week = (e && e.parameter && e.parameter.week) || '';
     if (!phone || !week) {
@@ -254,6 +265,8 @@ function doPost(e) {
     const lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
+      dedupeAllPhones_(sheet);
+
       const submittedAt = new Date().toISOString();
       const row = [submittedAt, phone, name, position, weekStart];
       const shiftStates = [];
@@ -342,6 +355,40 @@ function readSubmission_(phone, weekStart) {
     shifts: shifts,
     submittedAt: latestTs,
   };
+}
+
+function dedupeAllPhones_(sheet) {
+  // For every phone present in the sheet, keep only the row with the latest
+  // submittedAt; delete the rest. Operates in-place. Returns the number of
+  // rows deleted.
+  const last = sheet.getLastRow();
+  if (last < 3) return 0;
+  const lastCol = sheet.getLastColumn();
+  if (lastCol < 2) return 0;
+  const range = sheet.getRange(2, 1, last - 1, Math.max(lastCol, 2));
+  const values = range.getValues();
+  const display = range.getDisplayValues();
+  const latestByPhone = {};
+  for (let i = 0; i < values.length; i += 1) {
+    const phone = (String(display[i][1] || '').replace(/\D/g, '')) ||
+                  (String(values[i][1] || '').replace(/\D/g, ''));
+    if (!phone) continue;
+    const ts = String(values[i][0] || display[i][0] || '');
+    const cur = latestByPhone[phone];
+    if (!cur || ts > cur.ts) latestByPhone[phone] = { idx: i, ts: ts };
+  }
+  const keep = {};
+  Object.keys(latestByPhone).forEach(function (p) { keep[latestByPhone[p].idx] = true; });
+  let deleted = 0;
+  for (let i = values.length - 1; i >= 0; i -= 1) {
+    const phone = (String(display[i][1] || '').replace(/\D/g, '')) ||
+                  (String(values[i][1] || '').replace(/\D/g, ''));
+    if (phone && !keep[i]) {
+      sheet.deleteRow(i + 2);
+      deleted += 1;
+    }
+  }
+  return deleted;
 }
 
 function collapseRowsFor_(sheet, phone) {
