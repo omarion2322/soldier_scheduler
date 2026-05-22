@@ -47,6 +47,11 @@ const SHIFT_TIME_LABELS = {
 };
 const DAY_NAMES_HE = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 
+function canonPhone_(v) {
+  const digits = String(v == null ? '' : v).replace(/\D/g, '');
+  return digits.replace(/^0+/, '');
+}
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -230,7 +235,7 @@ function doGet(e) {
 function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
-    const phone = String(body.phone || '').replace(/\D/g, '');
+    const phone = canonPhone_(body.phone || '');
     const name = String(body.name || '').trim();
     const position = String(body.position || '').trim();
     const weekStart = String(body.weekStart || '');
@@ -321,7 +326,7 @@ function readSubmission_(phone, weekStart) {
   let latestTs = '';
   values.forEach(function (r) {
     const ts = String(r[0]);
-    if (String(r[1]).trim() === String(phone).trim() && ts > latestTs) {
+    if (canonPhone_(r[1]) === canonPhone_(phone) && ts > latestTs) {
       row = r;
       latestTs = ts;
     }
@@ -370,8 +375,8 @@ function dedupeAllPhones_(sheet) {
   const display = range.getDisplayValues();
   const latestByPhone = {};
   for (let i = 0; i < values.length; i += 1) {
-    const phone = (String(display[i][1] || '').replace(/\D/g, '')) ||
-                  (String(values[i][1] || '').replace(/\D/g, ''));
+    const phone = (canonPhone_(display[i][1] || '')) ||
+                  (canonPhone_(values[i][1] || ''));
     if (!phone) continue;
     const ts = String(values[i][0] || display[i][0] || '');
     const cur = latestByPhone[phone];
@@ -381,8 +386,8 @@ function dedupeAllPhones_(sheet) {
   Object.keys(latestByPhone).forEach(function (p) { keep[latestByPhone[p].idx] = true; });
   let deleted = 0;
   for (let i = values.length - 1; i >= 0; i -= 1) {
-    const phone = (String(display[i][1] || '').replace(/\D/g, '')) ||
-                  (String(values[i][1] || '').replace(/\D/g, ''));
+    const phone = (canonPhone_(display[i][1] || '')) ||
+                  (canonPhone_(values[i][1] || ''));
     if (phone && !keep[i]) {
       sheet.deleteRow(i + 2);
       deleted += 1;
@@ -398,11 +403,11 @@ function collapseRowsFor_(sheet, phone) {
   if (last < 2) return 0;
   const display = sheet.getRange(2, 2, last - 1, 1).getDisplayValues();
   const raw = sheet.getRange(2, 2, last - 1, 1).getValues();
-  const target = String(phone).replace(/\D/g, '');
+  const target = canonPhone_(phone);
   const matches = [];
   for (let i = 0; i < display.length; i += 1) {
-    const d = String(display[i][0] || '').replace(/\D/g, '');
-    const r = String(raw[i][0] || '').replace(/\D/g, '');
+    const d = canonPhone_(display[i][0] || '');
+    const r = canonPhone_(raw[i][0] || '');
     if (target && (d === target || r === target)) matches.push(i + 2);
   }
   if (matches.length === 0) return 0;
@@ -417,10 +422,10 @@ function deleteRowsFor_(sheet, phone) {
   if (last < 2) return;
   const display = sheet.getRange(2, 2, last - 1, 1).getDisplayValues();
   const raw = sheet.getRange(2, 2, last - 1, 1).getValues();
-  const target = String(phone).replace(/\D/g, '');
+  const target = canonPhone_(phone);
   for (let i = display.length - 1; i >= 0; i -= 1) {
-    const d = String(display[i][0] || '').replace(/\D/g, '');
-    const r = String(raw[i][0] || '').replace(/\D/g, '');
+    const d = canonPhone_(display[i][0] || '');
+    const r = canonPhone_(raw[i][0] || '');
     if (target && (d === target || r === target)) {
       sheet.deleteRow(i + 2);
     }
@@ -486,8 +491,8 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     const latestByPhone = {};
     rows.forEach(function (r, i) {
       const phoneDigits =
-        String(display[i][1] || '').replace(/\D/g, '') ||
-        String(r[1] || '').replace(/\D/g, '');
+        canonPhone_(display[i][1] || '') ||
+        canonPhone_(r[1] || '');
       if (!phoneDigits) return;
       const ts = String(r[0] || display[i][0] || '');
       const cur = latestByPhone[phoneDigits];
