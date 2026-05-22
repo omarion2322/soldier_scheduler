@@ -427,11 +427,36 @@ function deleteRowsFor_(sheet, phone) {
   }
 }
 
+function snapshotRightAssignments_(sheet, weekStart) {
+  // Read manual assignments from columns 6 (mefaked) and 7 (sambatz) of the
+  // right-side table. Layout is deterministic: row 1 = title, row 2 = spacer,
+  // then per day: day header / sub-headers / position labels / 3 slot rows /
+  // spacer = 7 rows.
+  const days = weekDaysFor_(weekStart);
+  const snapshot = {};
+  const lastRow = sheet.getLastRow();
+  const lastCol = sheet.getLastColumn();
+  if (lastRow < 6 || lastCol < 7) return snapshot;
+  for (let k = 0; k < days.length; k += 1) {
+    const dayStart = 3 + k * 7;
+    snapshot[days[k]] = {};
+    for (let s = 0; s < SLOTS.length; s += 1) {
+      const row = dayStart + 3 + s;
+      if (row > lastRow) break;
+      const mefaked = String(sheet.getRange(row, 6).getValue() || '');
+      const sambatz = String(sheet.getRange(row, 7).getValue() || '');
+      snapshot[days[k]][SLOTS[s]] = { mefaked: mefaked, sambatz: sambatz };
+    }
+  }
+  return snapshot;
+}
+
 function rebuildShiftsTab_(dataSheet, weekStart) {
   const tabName = shiftsTabNameFor_(weekStart);
   if (!tabName) return;
   const ss = SpreadsheetApp.openById(SHEET_ID);
   let sheet = ss.getSheetByName(tabName);
+  const preserved = sheet ? snapshotRightAssignments_(sheet, weekStart) : {};
   if (!sheet) sheet = ss.insertSheet(tabName);
   sheet.clear();
   sheet.setHiddenGridlines(false);
@@ -493,13 +518,21 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
   const COL_TIME = 1;
   const COL_MEFAKED = 2;
   const COL_SAMBATZ = 3;
-  const TOTAL_COLS = 3;
+  const COL_SPACER = 4;
+  const COL_TIME_R = 5;
+  const COL_MEFAKED_R = 6;
+  const COL_SAMBATZ_R = 7;
+  const LEFT_COLS = 3;
+  const RIGHT_COLS = 3;
+  const TOTAL_COLS = 7;
 
   const COLOR_TITLE_BG = '#1f3a5f';
   const COLOR_TITLE_FG = '#ffffff';
   const COLOR_DAY_BG = '#2f5d8e';
   const COLOR_DAY_FG = '#ffffff';
-  const COLOR_POS_BG = '#cfe2f3';
+  const COLOR_SUBHDR_AVAIL = '#cfe2f3';
+  const COLOR_SUBHDR_ASSIGN = '#fce5cd';
+  const COLOR_POS_BG = '#e8eef7';
   const COLOR_TIME_BG = '#f3f3f3';
   const COLOR_BAND_A = '#ffffff';
   const COLOR_BAND_B = '#f8fafc';
@@ -543,11 +576,34 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     sheet.setRowHeight(curRow, 30);
     curRow += 1;
 
-    // Position label row
-    const posRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
-    posRange.setValues([['', POSITION_LABELS_HE.mefaked_haml, POSITION_LABELS_HE.sambatz]]);
-    posRange.setBackground(COLOR_POS_BG)
+    // Sub-headers: "זמינות" over left table, "שיבוץ" over right table
+    const leftSub = sheet.getRange(curRow, COL_TIME, 1, LEFT_COLS);
+    leftSub.merge();
+    leftSub.setValue('זמינות')
+      .setBackground(COLOR_SUBHDR_AVAIL)
       .setFontWeight('bold')
+      .setFontSize(12)
+      .setHorizontalAlignment('center')
+      .setVerticalAlignment('middle');
+    const rightSub = sheet.getRange(curRow, COL_TIME_R, 1, RIGHT_COLS);
+    rightSub.merge();
+    rightSub.setValue('שיבוץ')
+      .setBackground(COLOR_SUBHDR_ASSIGN)
+      .setFontWeight('bold')
+      .setFontSize(12)
+      .setHorizontalAlignment('center')
+      .setVerticalAlignment('middle');
+    sheet.setRowHeight(curRow, 24);
+    curRow += 1;
+
+    // Position label row (both tables)
+    const posRow = [['', POSITION_LABELS_HE.mefaked_haml, POSITION_LABELS_HE.sambatz, '',
+                     '', POSITION_LABELS_HE.mefaked_haml, POSITION_LABELS_HE.sambatz]];
+    const posRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
+    posRange.setValues(posRow);
+    sheet.getRange(curRow, COL_TIME, 1, LEFT_COLS).setBackground(COLOR_POS_BG);
+    sheet.getRange(curRow, COL_TIME_R, 1, RIGHT_COLS).setBackground(COLOR_POS_BG);
+    posRange.setFontWeight('bold')
       .setFontSize(12)
       .setHorizontalAlignment('center')
       .setVerticalAlignment('middle');
@@ -558,10 +614,15 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     SLOTS.forEach(function (slot, slotIdx) {
       const mefakedNames = avail[d][slot].mefaked_haml;
       const sambatzNames = avail[d][slot].sambatz;
+      const prev = (preserved[d] && preserved[d][slot]) || { mefaked: '', sambatz: '' };
       const rowValues = [[
         SHIFT_TIME_LABELS[slot],
         mefakedNames.join('\n'),
         sambatzNames.join('\n'),
+        '',
+        SHIFT_TIME_LABELS[slot],
+        prev.mefaked,
+        prev.sambatz,
       ]];
       const rowRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
       rowRange.setValues(rowValues);
@@ -572,29 +633,48 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
 
       const bandColor = slotIdx % 2 === 0 ? COLOR_BAND_A : COLOR_BAND_B;
       sheet.getRange(curRow, COL_MEFAKED, 1, 2).setBackground(bandColor);
+      sheet.getRange(curRow, COL_MEFAKED_R, 1, 2).setBackground(bandColor);
       sheet.getRange(curRow, COL_TIME)
         .setBackground(COLOR_TIME_BG)
         .setFontWeight('bold')
         .setFontSize(11);
+      sheet.getRange(curRow, COL_TIME_R)
+        .setBackground(COLOR_TIME_BG)
+        .setFontWeight('bold')
+        .setFontSize(11);
 
-      // Row height grows with the larger of the two name lists.
-      const maxNames = Math.max(1, mefakedNames.length, sambatzNames.length);
+      const maxNames = Math.max(
+        1,
+        mefakedNames.length,
+        sambatzNames.length,
+        (prev.mefaked.match(/\n/g) || []).length + (prev.mefaked ? 1 : 0),
+        (prev.sambatz.match(/\n/g) || []).length + (prev.sambatz ? 1 : 0),
+      );
       sheet.setRowHeight(curRow, Math.max(36, 18 + maxNames * 18));
 
       curRow += 1;
     });
-    const slotEndRow = curRow - 1;
 
-    // Border around the day block (day header + position labels + slot rows).
-    const blockRange = sheet.getRange(curRow - SLOTS.length - 2, 1, SLOTS.length + 2, TOTAL_COLS);
-    blockRange.setBorder(true, true, true, true, false, false, COLOR_BORDER,
+    // Borders around the LEFT block (sub-header + position labels + slot rows = SLOTS.length + 2 rows).
+    const leftBlock = sheet.getRange(curRow - SLOTS.length - 2, COL_TIME, SLOTS.length + 2, LEFT_COLS);
+    leftBlock.setBorder(true, true, true, true, false, false, COLOR_BORDER,
       SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-    // Inner horizontal separators between slot rows.
-    sheet.getRange(slotStartRow, 1, SLOTS.length, TOTAL_COLS)
+    const rightBlock = sheet.getRange(curRow - SLOTS.length - 2, COL_TIME_R, SLOTS.length + 2, RIGHT_COLS);
+    rightBlock.setBorder(true, true, true, true, false, false, COLOR_BORDER,
+      SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
+
+    // Inner horizontal separators between slot rows (both tables).
+    sheet.getRange(slotStartRow, COL_TIME, SLOTS.length, LEFT_COLS)
+      .setBorder(null, null, null, null, false, true, '#dadce0',
+        SpreadsheetApp.BorderStyle.SOLID);
+    sheet.getRange(slotStartRow, COL_TIME_R, SLOTS.length, RIGHT_COLS)
       .setBorder(null, null, null, null, false, true, '#dadce0',
         SpreadsheetApp.BorderStyle.SOLID);
     // Vertical separator between position columns.
     sheet.getRange(slotStartRow - 1, COL_MEFAKED, SLOTS.length + 1, 2)
+      .setBorder(null, null, null, null, true, false, '#dadce0',
+        SpreadsheetApp.BorderStyle.SOLID);
+    sheet.getRange(slotStartRow - 1, COL_MEFAKED_R, SLOTS.length + 1, 2)
       .setBorder(null, null, null, null, true, false, '#dadce0',
         SpreadsheetApp.BorderStyle.SOLID);
 
@@ -602,9 +682,13 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     curRow += 1;
   });
 
-  sheet.setColumnWidth(COL_TIME, 130);
-  sheet.setColumnWidth(COL_MEFAKED, 200);
-  sheet.setColumnWidth(COL_SAMBATZ, 260);
+  sheet.setColumnWidth(COL_TIME, 110);
+  sheet.setColumnWidth(COL_MEFAKED, 180);
+  sheet.setColumnWidth(COL_SAMBATZ, 240);
+  sheet.setColumnWidth(COL_SPACER, 20);
+  sheet.setColumnWidth(COL_TIME_R, 110);
+  sheet.setColumnWidth(COL_MEFAKED_R, 160);
+  sheet.setColumnWidth(COL_SAMBATZ_R, 200);
   sheet.setFrozenRows(1);
   sheet.setHiddenGridlines(true);
 }
