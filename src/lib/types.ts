@@ -1,5 +1,8 @@
 export type ShiftSlot = 'morning' | 'afternoon' | 'night';
 export type ShiftState = 'can' | 'cant';
+export type Position = 'sambatz' | 'mefaked_haml';
+
+export const POSITIONS: readonly Position[] = ['sambatz', 'mefaked_haml'] as const;
 
 export interface ShiftSlotInfo {
   slot: ShiftSlot;
@@ -18,6 +21,7 @@ export type DayShifts = Record<ShiftSlot, ShiftState>;
 export interface Submission {
   phone: string;
   name: string;
+  position: Position;
   weekStart: string;
   unavailableDays: string[];
   shifts: Record<string, DayShifts>;
@@ -33,6 +37,6 @@ export interface Week {
 
 export interface ApiResponse {
   ok: boolean;
-  reason?: 'deadline_passed' | 'invalid' | 'server_error';
+  reason?: 'invalid' | 'server_error' | 'locked';
   submission?: Submission;
 }

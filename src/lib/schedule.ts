@@ -127,17 +127,6 @@ export function localDateInTimeZone(date: Date, timeZone: string): string {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-/**
- * Deadline is Sunday 00:00 in Asia/Jerusalem of the given week.
- * Week starts Tuesday; deadline = weekStart + 5 days at 00:00 local time.
- * We compare the local-tz date string: if local date >= deadline date, it's past.
- */
-export function isPastDeadline(weekStart: string, now: Date): boolean {
-  const deadlineLocalIso = addDays(weekStart, 5);
-  const nowLocalIso = localDateInTimeZone(now, SCHEDULE_TIMEZONE);
-  return nowLocalIso >= deadlineLocalIso;
-}
-
 export const SCHEDULE_BOUNDS = {
   startIso: SCHEDULE_START_ISO,
   endIso: SCHEDULE_END_ISO,

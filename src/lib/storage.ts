@@ -5,6 +5,7 @@ const IDENTITY_KEY = 'soldier_scheduler.identity';
 interface IdentityCache {
   name: string;
   phone: string;
+  position?: import('./types').Position;
 }
 
 export function loadIdentity(): IdentityCache | null {

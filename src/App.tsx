@@ -8,10 +8,9 @@ import {
   emptyDayShifts,
   generateWeeks,
   getCurrentWeekIndex,
-  isPastDeadline,
   normalizeShifts,
 } from './lib/schedule';
-import type { DayShifts, ShiftSlot, Submission } from './lib/types';
+import type { DayShifts, Position, ShiftSlot, Submission } from './lib/types';
 import {
   clearDraft,
   loadDraft,
@@ -20,7 +19,7 @@ import {
   saveDraft,
   saveIdentity,
 } from './lib/storage';
-import { fetchSubmission, postSubmission } from './lib/api';
+import { fetchLockedWeeks, fetchSubmission, postSubmission } from './lib/api';
 import { I18nProvider, useI18n } from './lib/i18n';
 
 type Toast = { kind: 'success' | 'error' | 'info'; text: string } | null;
@@ -40,6 +39,7 @@ function AppInner() {
   const cached = useMemo(() => loadIdentity(), []);
   const [name, setName] = useState(cached?.name ?? '');
   const [phone, setPhone] = useState(() => (cached?.phone ?? '').replace(/\D/g, '').slice(0, 10));
+  const [position, setPosition] = useState<Position | ''>(cached?.position ?? '');
   const [authenticated, setAuthenticated] = useState(false);
 
   const [shifts, setShifts] = useState<Record<string, DayShifts>>(() => initialShifts(week.days));
@@ -48,9 +48,22 @@ function AppInner() {
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
   const [loadMessage, setLoadMessage] = useState<string | null>(null);
+  const [lockedWeeks, setLockedWeeks] = useState<Set<string>>(() => new Set());
 
   const normalizedPhone = normalizePhone(phone);
-  const pastDeadline = isPastDeadline(week.start, new Date());
+  const weekLocked = lockedWeeks.has(week.start);
+
+  // Load admin-controlled lock list once on mount; refresh on auth.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const list = await fetchLockedWeeks();
+      if (!cancelled) setLockedWeeks(new Set(list));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authenticated]);
 
   // When user navigates between weeks after authenticating, refresh from server.
   useEffect(() => {
@@ -89,11 +102,11 @@ function AppInner() {
 
   // Persist identity locally for convenience.
   useEffect(() => {
-    if (name || phone) saveIdentity({ name, phone });
-  }, [name, phone]);
+    if (name || phone || position) saveIdentity({ name, phone, position: position || undefined });
+  }, [name, phone, position]);
 
   const handleCycleShift = (date: string, slot: ShiftSlot) => {
-    if (!authenticated || unavailable.has(date)) return;
+    if (!authenticated || weekLocked || unavailable.has(date)) return;
     setShifts((prev) => {
       const day = prev[date] ?? emptyDayShifts();
       return { ...prev, [date]: { ...day, [slot]: cycleShiftState(day[slot]) } };
@@ -101,7 +114,7 @@ function AppInner() {
   };
 
   const handleToggleUnavailable = (date: string) => {
-    if (!authenticated) return;
+    if (!authenticated || weekLocked) return;
     setUnavailable((prev) => {
       const next = new Set(prev);
       if (next.has(date)) next.delete(date);
@@ -111,7 +124,7 @@ function AppInner() {
   };
 
   const handleContinue = async () => {
-    if (!name.trim() || normalizedPhone.length !== 10) return;
+    if (!name.trim() || normalizedPhone.length !== 10 || !position) return;
     setLoading(true);
     setLoadMessage(null);
     try {
@@ -120,6 +133,7 @@ function AppInner() {
       if (existing) {
         setShifts({ ...empty, ...normalizeShifts(existing.shifts) });
         setUnavailable(new Set(existing.unavailableDays));
+        if (existing.position) setPosition(existing.position);
         setLoadMessage(t('loadedPrev'));
       } else {
         setShifts(empty);
@@ -146,12 +160,12 @@ function AppInner() {
 
   const handleSubmit = async () => {
     if (!authenticated) return;
-    if (!normalizedPhone || !name.trim()) {
-      setToast({ kind: 'error', text: t('missingIdentity') });
+    if (weekLocked) {
+      setToast({ kind: 'error', text: t('weekLockedError') });
       return;
     }
-    if (pastDeadline) {
-      setToast({ kind: 'error', text: t('deadlineError') });
+    if (!normalizedPhone || !name.trim() || !position) {
+      setToast({ kind: 'error', text: t('missingIdentity') });
       return;
     }
     setSubmitting(true);
@@ -164,6 +178,7 @@ function AppInner() {
       const submission: Submission = {
         phone: normalizedPhone,
         name: name.trim(),
+        position: position as Position,
         weekStart: week.start,
         unavailableDays: Array.from(unavailable),
         shifts: finalShifts,
@@ -172,8 +187,9 @@ function AppInner() {
       if (res.ok) {
         setToast({ kind: 'success', text: t('submittedOk') });
         clearDraft(normalizedPhone, week.start);
-      } else if (res.reason === 'deadline_passed') {
-        setToast({ kind: 'error', text: t('deadlineError') });
+      } else if (res.reason === 'locked') {
+        setLockedWeeks((prev) => new Set(prev).add(week.start));
+        setToast({ kind: 'error', text: t('weekLockedError') });
       } else {
         setToast({ kind: 'error', text: t('submitFailed') });
       }
@@ -207,9 +223,11 @@ function AppInner() {
       <IdentityForm
         name={name}
         phone={phone}
+        position={position}
         locked={authenticated}
         onNameChange={setName}
         onPhoneChange={setPhone}
+        onPositionChange={setPosition}
         onContinue={handleContinue}
         onChange={handleChangeIdentity}
         loading={loading}
@@ -220,9 +238,9 @@ function AppInner() {
         <>
           <WeekNav weeks={weeks} index={index} onChange={setIndex} />
 
-          {pastDeadline && (
+          {weekLocked && (
             <div className="mx-4 mb-2 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">
-              {t('deadlinePassed')}
+              {t('weekLocked')}
             </div>
           )}
 
@@ -230,7 +248,7 @@ function AppInner() {
             week={week}
             shifts={shifts}
             unavailableDays={unavailable}
-            readOnly={pastDeadline}
+            readOnly={weekLocked}
             onCycleShift={handleCycleShift}
             onToggleUnavailable={handleToggleUnavailable}
           />
@@ -238,7 +256,7 @@ function AppInner() {
           <SubmitBar
             onSubmit={handleSubmit}
             submitting={submitting}
-            disabled={pastDeadline || !name.trim() || !normalizedPhone}
+            disabled={weekLocked || !name.trim() || !normalizedPhone || !position}
             message={toast?.text}
             messageTone={toast?.kind}
           />

@@ -4,8 +4,9 @@
  * Deploy:
  *   1. Open https://script.google.com and create a new project.
  *   2. Paste this file's contents into Code.gs.
- *   3. Create a Google Sheet; copy its ID into SHEET_ID below.
- *   4. The sheet must have a tab named "responses". On first run, headers are written.
+ *   3. SHEET_ID below is already set to the project sheet.
+ *   4. Each submitted week is written to its own tab named e.g. "Week 1 (May 26-Jun 1)".
+ *      Tabs are created automatically on first submission for that week.
  *   5. Deploy > New deployment > type "Web app".
  *        Execute as: Me
  *        Who has access: Anyone
@@ -13,19 +14,26 @@
  *
  * Endpoints:
  *   GET  ?phone=...&week=YYYY-MM-DD  -> { ok, submission|null }
+ *   GET  ?mode=locks                 -> { ok, lockedWeeks: ['YYYY-MM-DD', ...] }
  *   POST JSON Submission             -> { ok, reason? }
  *
- * The deadline is Sunday 00:00 Asia/Jerusalem of the submitted week.
+ * Locking weeks:
+ *   Add a tab named "locks" to the spreadsheet. Column A header: weekStart.
+ *   Each subsequent row holds a Tuesday YYYY-MM-DD that should be read-only.
+ *   The script creates this tab automatically on first request if missing.
  */
 
-const SHEET_ID = 'PUT_YOUR_SHEET_ID_HERE';
-const TAB_NAME = 'responses';
-const TIMEZONE = 'Asia/Jerusalem';
+const SHEET_ID = '1RQEXiMVyHqXV75j_gm0qT_1QobtC-TtNrwDxCYxyf2Q';
+const LOCKS_TAB = 'locks';
+
+const SCHEDULE_START_ISO = '2026-05-26';
+const SCHEDULE_END_ISO = '2026-07-18';
 
 const HEADERS = [
   'submittedAt',
   'phone',
   'name',
+  'position',
   'weekStart',
   'date',
   'slot',
@@ -33,14 +41,56 @@ const HEADERS = [
   'unavailableDay',
 ];
 
-function getSheet_() {
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function addDaysIso_(iso, n) {
+  const parts = iso.split('-');
+  const dt = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+  dt.setUTCDate(dt.getUTCDate() + n);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return yy + '-' + mm + '-' + dd;
+}
+
+function formatMonthDay_(iso) {
+  const parts = iso.split('-');
+  const m = Number(parts[1]) - 1;
+  const d = Number(parts[2]);
+  return MONTHS[m] + ' ' + d;
+}
+
+function weekIndexFor_(weekStart) {
+  // Returns 1-based index, or 0 if invalid.
+  if (weekStart < SCHEDULE_START_ISO || weekStart > SCHEDULE_END_ISO) return 0;
+  const a = new Date(SCHEDULE_START_ISO + 'T00:00:00Z').getTime();
+  const b = new Date(weekStart + 'T00:00:00Z').getTime();
+  const diffDays = Math.round((b - a) / 86400000);
+  if (diffDays < 0 || diffDays % 7 !== 0) return 0;
+  return Math.floor(diffDays / 7) + 1;
+}
+
+function tabNameFor_(weekStart) {
+  const idx = weekIndexFor_(weekStart);
+  if (!idx) return '';
+  const fullEnd = addDaysIso_(weekStart, 6);
+  const end = fullEnd <= SCHEDULE_END_ISO ? fullEnd : SCHEDULE_END_ISO;
+  return 'Week ' + idx + ' (' + formatMonthDay_(weekStart) + '-' + formatMonthDay_(end) + ')';
+}
+
+function getWeekSheet_(weekStart) {
+  const name = tabNameFor_(weekStart);
+  if (!name) return null;
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  let sheet = ss.getSheetByName(TAB_NAME);
+  let sheet = ss.getSheetByName(name);
   if (!sheet) {
-    sheet = ss.insertSheet(TAB_NAME);
-  }
-  if (sheet.getLastRow() === 0) {
+    sheet = ss.insertSheet(name);
     sheet.appendRow(HEADERS);
+    sheet.setFrozenRows(1);
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(HEADERS);
+    sheet.setFrozenRows(1);
   }
   return sheet;
 }
@@ -51,8 +101,48 @@ function jsonResponse_(obj) {
   );
 }
 
+function getLocksSheet_() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sheet = ss.getSheetByName(LOCKS_TAB);
+  if (!sheet) {
+    sheet = ss.insertSheet(LOCKS_TAB);
+    sheet.appendRow(['weekStart']);
+    sheet.setFrozenRows(1);
+  } else if (sheet.getLastRow() === 0) {
+    sheet.appendRow(['weekStart']);
+    sheet.setFrozenRows(1);
+  }
+  return sheet;
+}
+
+function getLockedWeeks_() {
+  const sheet = getLocksSheet_();
+  const last = sheet.getLastRow();
+  if (last < 2) return {};
+  const values = sheet.getRange(2, 1, last - 1, 1).getValues();
+  const set = {};
+  values.forEach(function (row) {
+    let v = row[0];
+    if (v instanceof Date) {
+      v = Utilities.formatDate(v, 'UTC', 'yyyy-MM-dd');
+    } else {
+      v = String(v).trim();
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) set[v] = true;
+  });
+  return set;
+}
+
+function isWeekLocked_(weekStart) {
+  return Boolean(getLockedWeeks_()[weekStart]);
+}
+
 function doGet(e) {
   try {
+    const mode = (e && e.parameter && e.parameter.mode) || '';
+    if (mode === 'locks') {
+      return jsonResponse_({ ok: true, lockedWeeks: Object.keys(getLockedWeeks_()) });
+    }
     const phone = (e && e.parameter && e.parameter.phone) || '';
     const week = (e && e.parameter && e.parameter.week) || '';
     if (!phone || !week) {
@@ -70,25 +160,30 @@ function doPost(e) {
     const body = JSON.parse(e.postData.contents);
     const phone = String(body.phone || '').replace(/\D/g, '');
     const name = String(body.name || '').trim();
+    const position = String(body.position || '').trim();
     const weekStart = String(body.weekStart || '');
-    if (!phone || !name || !weekStart) {
+
+    const VALID_POSITIONS = { sambatz: true, mefaked_haml: true };
+    if (!phone || !name || !weekStart || !VALID_POSITIONS[position]) {
       return jsonResponse_({ ok: false, reason: 'invalid' });
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
       return jsonResponse_({ ok: false, reason: 'invalid' });
     }
-    if (weekStart < '2026-05-26' || weekStart > '2026-07-18') {
+    if (!weekIndexFor_(weekStart)) {
       return jsonResponse_({ ok: false, reason: 'invalid' });
     }
-    if (isPastDeadline_(weekStart)) {
-      return jsonResponse_({ ok: false, reason: 'deadline_passed' });
+    if (isWeekLocked_(weekStart)) {
+      return jsonResponse_({ ok: false, reason: 'locked' });
     }
 
     const VALID_SLOTS = { morning: true, afternoon: true, night: true };
     const VALID_STATES = { can: true, cant: true };
     const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-    const sheet = getSheet_();
+    const sheet = getWeekSheet_(weekStart);
+    if (!sheet) return jsonResponse_({ ok: false, reason: 'invalid' });
+
     const lock = LockService.getScriptLock();
     lock.waitLock(10000);
     try {
@@ -104,12 +199,12 @@ function doPost(e) {
           if (!VALID_SLOTS[slot]) return;
           let state = day[slot] || 'can';
           if (!VALID_STATES[state]) state = 'can';
-          rows.push([submittedAt, phone, name, weekStart, date, slot, state, '']);
+          rows.push([submittedAt, phone, name, position, weekStart, date, slot, state, '']);
         });
       });
       (body.unavailableDays || []).forEach(function (d) {
         if (ISO_DATE.test(String(d))) {
-          rows.push([submittedAt, phone, name, weekStart, '', '', '', d]);
+          rows.push([submittedAt, phone, name, position, weekStart, '', '', '', d]);
         }
       });
 
@@ -127,13 +222,15 @@ function doPost(e) {
 }
 
 function readSubmission_(phone, weekStart) {
-  const sheet = getSheet_();
+  const sheet = getWeekSheet_(weekStart);
+  if (!sheet) return null;
   const last = sheet.getLastRow();
   if (last < 2) return null;
   const values = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
 
+  // Column order: submittedAt, phone, name, position, weekStart, date, slot, state, unavailableDay
   const matching = values.filter(function (row) {
-    return String(row[1]) === phone && String(row[3]) === weekStart;
+    return String(row[1]) === phone && String(row[4]) === weekStart;
   });
   if (matching.length === 0) return null;
 
@@ -149,12 +246,14 @@ function readSubmission_(phone, weekStart) {
   const shifts = {};
   const unavailableDays = [];
   let name = '';
+  let position = '';
   latest.forEach(function (row) {
     name = String(row[2]) || name;
-    const date = String(row[4]);
-    const slot = String(row[5]);
-    const state = String(row[6]);
-    const unavail = String(row[7]);
+    position = String(row[3]) || position;
+    const date = String(row[5]);
+    const slot = String(row[6]);
+    const state = String(row[7]);
+    const unavail = String(row[8]);
     if (unavail) {
       unavailableDays.push(unavail);
     } else if (date && slot) {
@@ -166,6 +265,7 @@ function readSubmission_(phone, weekStart) {
   return {
     phone: phone,
     name: name,
+    position: position,
     weekStart: weekStart,
     unavailableDays: unavailableDays,
     shifts: shifts,
@@ -178,30 +278,8 @@ function deleteRowsFor_(sheet, phone, weekStart) {
   if (last < 2) return;
   const values = sheet.getRange(2, 1, last - 1, HEADERS.length).getValues();
   for (let i = values.length - 1; i >= 0; i -= 1) {
-    if (String(values[i][1]) === phone && String(values[i][3]) === weekStart) {
+    if (String(values[i][1]) === phone && String(values[i][4]) === weekStart) {
       sheet.deleteRow(i + 2);
     }
   }
-}
-
-function isPastDeadline_(weekStart) {
-  // weekStart is a Tuesday (YYYY-MM-DD). Deadline = weekStart + 5 days at 00:00 local.
-  const parts = weekStart.split('-');
-  const y = Number(parts[0]);
-  const m = Number(parts[1]);
-  const d = Number(parts[2]);
-  // Build a Date representing midnight local Asia/Jerusalem on (weekStart + 5).
-  // Apps Script uses the script's timezone; we use Utilities.formatDate to get current local date.
-  const nowLocal = Utilities.formatDate(new Date(), TIMEZONE, 'yyyy-MM-dd');
-  const deadline = addDaysIso_(y, m, d, 5);
-  return nowLocal >= deadline;
-}
-
-function addDaysIso_(y, m, d, n) {
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  dt.setUTCDate(dt.getUTCDate() + n);
-  const yy = dt.getUTCFullYear();
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(dt.getUTCDate()).padStart(2, '0');
-  return yy + '-' + mm + '-' + dd;
 }

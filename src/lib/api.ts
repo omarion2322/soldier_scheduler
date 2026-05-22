@@ -19,7 +19,22 @@ export async function fetchSubmission(
 }
 
 /**
- * Submits/updates the submission. Apps Script enforces the deadline server-side.
+ * Fetches the admin-controlled list of locked weeks. Returns [] on failure.
+ */
+export async function fetchLockedWeeks(): Promise<string[]> {
+  if (!API_URL) return [];
+  try {
+    const res = await fetch(`${API_URL}?mode=locks`, { method: 'GET' });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { ok: boolean; lockedWeeks?: string[] };
+    return Array.isArray(data.lockedWeeks) ? data.lockedWeeks : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Submits/updates the submission.
  * We POST as text/plain to avoid a CORS preflight (Apps Script supports this).
  */
 export async function postSubmission(submission: Submission): Promise<ApiResponse> {
