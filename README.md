@@ -96,11 +96,18 @@ For the selected week the page:
    - Per slot: 1 מפקד חמ״ל + 2 סמב״צ (1 + 1 at night).
    - At least 2 shifts of rest between any soldier's consecutive assignments.
    - Even balance via min-count tie-break.
+   - **Hard constraints:** any name already in the table — whether typed in
+     manually, loaded from the sheet, or produced by a previous run — is locked.
+     The solver counts it toward composition demand, reserves its rest gap, and
+     never displaces it.
    - Relaxations (in order, each adds a visible warning): drop the rest gap to 1 → swap a
      missing role with the other position → leave the slot under-filled.
-4. Shows the resulting schedule plus a per-soldier shift count.
-5. **Save to sheet** writes the result into the right-side `שיבוץ` block of the matching
-   `Week N Shifts` tab (overwriting whatever was there).
+4. Shows the resulting schedule (every cell is an editable dropdown — pick or
+   clear names at any time) plus a per-soldier shift count. `⛔` next to a name
+   in the dropdown means that person marked the slot as "can't" / "at home" —
+   you can still hard-assign them.
+5. **Save to sheet** writes the result into the right-side `שיבוץ` block of the
+   matching `Week N Shifts` tab. **Clear** wipes the table back to empty.
 
 The build also emits `dist/404.html` (a copy of `index.html`) so GitHub Pages serves the SPA
 on a direct refresh of `/algo`.
