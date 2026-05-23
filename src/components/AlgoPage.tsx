@@ -1,0 +1,431 @@
+import { useEffect, useMemo, useState } from 'react';
+import { WeekNav } from './WeekNav';
+import { generateWeeks, getCurrentWeekIndex, formatDayShort } from '../lib/schedule';
+import type { ShiftSlot, Submission, WeekAssignmentsDTO, PrevDayAssignmentsDTO } from '../lib/types';
+import { fetchAlgoState, fetchWeekSubmissions, saveAlgoResult } from '../lib/api';
+import {
+  generateSchedule,
+  SHIFT_ORDER,
+  type PrevDayAssignments,
+  type SchedulerSoldier,
+  type WeekAssignments,
+} from '../lib/scheduler';
+import { I18nProvider, useI18n } from '../lib/i18n';
+
+const SLOT_LABEL_HE: Record<ShiftSlot, string> = {
+  morning: 'בוקר (06–14)',
+  afternoon: 'צהריים (14–22)',
+  night: 'לילה (22–06)',
+};
+
+function emptyPrevDay(): PrevDayAssignments {
+  return {
+    morning: { mefaked_haml: [], sambatz: [] },
+    afternoon: { mefaked_haml: [], sambatz: [] },
+    night: { mefaked_haml: [], sambatz: [] },
+  };
+}
+
+function submissionsToSoldiers(submissions: Submission[]): SchedulerSoldier[] {
+  return submissions.map((s) => ({
+    phone: s.phone,
+    name: s.name,
+    position: s.position,
+    availability: s.shifts,
+  }));
+}
+
+function prevDayDateFor(weekStart: string): string {
+  const [y, m, d] = weekStart.split('-').map(Number);
+  const dt = new Date(Date.UTC(y!, m! - 1, d!));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  const yy = dt.getUTCFullYear();
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getUTCDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+function AlgoPageInner() {
+  const { t } = useI18n();
+  const weeks = useMemo(() => generateWeeks(), []);
+  const [index, setIndex] = useState(() => getCurrentWeekIndex(new Date(), weeks));
+  const week = weeks[index]!;
+
+  const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [prevDay, setPrevDay] = useState<PrevDayAssignments>(() => emptyPrevDay());
+  const [assignments, setAssignments] = useState<WeekAssignments | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+
+  // Names directory for prev-day dropdowns: every submitter for the week.
+  const allNames = useMemo(
+    () => submissions.map((s) => s.name).filter((n) => n.trim().length > 0).sort(),
+    [submissions],
+  );
+  const mefakedNames = useMemo(
+    () => submissions.filter((s) => s.position === 'mefaked_haml').map((s) => s.name).sort(),
+    [submissions],
+  );
+  const sambatzNames = useMemo(
+    () => submissions.filter((s) => s.position === 'sambatz').map((s) => s.name).sort(),
+    [submissions],
+  );
+
+  const countsByPhone = useMemo(() => {
+    const out: Record<string, number> = {};
+    if (!assignments) return out;
+    const byName: Record<string, string> = {};
+    submissions.forEach((s) => {
+      byName[s.name] = s.phone;
+    });
+    for (const date of Object.keys(assignments)) {
+      for (const slot of SHIFT_ORDER) {
+        const block = assignments[date]![slot];
+        for (const n of [...block.mefaked_haml, ...block.sambatz]) {
+          const phone = byName[n] ?? n;
+          out[phone] = (out[phone] ?? 0) + 1;
+        }
+      }
+    }
+    return out;
+  }, [assignments, submissions]);
+
+  // Load data when the week changes.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    setInfo(null);
+    setAssignments(null);
+    setWarnings([]);
+    setPrevDay(emptyPrevDay());
+    void (async () => {
+      try {
+        const [subs, state] = await Promise.all([
+          fetchWeekSubmissions(week.start),
+          fetchAlgoState(week.start),
+        ]);
+        if (cancelled) return;
+        setSubmissions(subs);
+        if (state.prevDay) setPrevDay(toSchedPrev(state.prevDay));
+        if (state.current) {
+          setAssignments(toSchedAssignments(state.current, week.days));
+          setInfo('נטענה שיבוץ קיים מהגיליון.');
+        }
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [week.start, week.days]);
+
+  const handleRun = () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = generateSchedule({
+        days: week.days,
+        soldiers: submissionsToSoldiers(submissions),
+        prevDay,
+      });
+      setAssignments(res.assignments);
+      setWarnings(res.warnings);
+      if (res.unfilled.length > 0) {
+        setInfo(`נוצרה שיבוץ עם ${res.unfilled.length} משבצות שלא הצליחו להתמלא.`);
+      } else if (res.warnings.length > 0) {
+        setInfo('נוצרה שיבוץ עם פשרות (ראו התראות).');
+      } else {
+        setInfo('נוצרה שיבוץ ללא פשרות.');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!assignments) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const ok = await saveAlgoResult({
+        weekStart: week.start,
+        assignments: toDtoAssignments(assignments, week.days),
+      });
+      if (ok) setInfo('השיבוץ נשמר לגיליון Week N Shifts (טור שיבוץ).');
+      else setError('השמירה נכשלה.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updatePrev = (slot: ShiftSlot, role: 'mefaked_haml' | 'sambatz', i: number, name: string) => {
+    setPrevDay((prev) => {
+      const next = { ...prev, [slot]: { ...prev[slot] } };
+      const arr = [...next[slot][role]];
+      if (name) arr[i] = name;
+      else arr.splice(i, 1);
+      next[slot] = { ...next[slot], [role]: arr };
+      return next;
+    });
+  };
+
+  const addPrevName = (slot: ShiftSlot, role: 'mefaked_haml' | 'sambatz') => {
+    setPrevDay((prev) => {
+      const next = { ...prev, [slot]: { ...prev[slot] } };
+      next[slot] = { ...next[slot], [role]: [...next[slot][role], ''] };
+      return next;
+    });
+  };
+
+  const prevDate = prevDayDateFor(week.start);
+
+  return (
+    <div className="mx-auto flex min-h-full max-w-4xl flex-col bg-slate-50">
+      <header className="px-4 pb-2 pt-4 text-center">
+        <h1 className="text-2xl font-bold">{t('appTitle')} — שיבוץ אוטומטי</h1>
+        <p className="mt-1 text-sm text-slate-600">
+          טוען את האילוצים מהגיליון ומחשב שיבוץ. ניתן לערוך את משמרות יום רביעי הקודם ולחזור על החישוב.
+        </p>
+      </header>
+
+      <WeekNav weeks={weeks} index={index} onChange={setIndex} />
+
+      {loading && (
+        <div className="mx-4 my-2 rounded-lg bg-white p-3 text-sm shadow-sm">טוען נתונים…</div>
+      )}
+      {error && (
+        <div className="mx-4 my-2 rounded-lg bg-red-100 p-3 text-sm text-red-900 shadow-sm">
+          {error}
+        </div>
+      )}
+      {info && !error && (
+        <div className="mx-4 my-2 rounded-lg bg-blue-50 p-3 text-sm text-blue-900 shadow-sm">
+          {info}
+        </div>
+      )}
+
+      <section className="mx-4 my-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <h2 className="mb-2 font-bold">
+          משמרות יום קודם — {formatDayShort(prevDate)} ({prevDate})
+        </h2>
+        <p className="mb-3 text-xs text-slate-600">
+          הזינו או טענו את שיבוץ יום רביעי הקודם כדי שהאלגוריתם ישמור על מרווח של שתי משמרות לפחות בין משמרות.
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          {SHIFT_ORDER.map((slot) => (
+            <div key={slot} className="rounded-lg border border-slate-200 p-3">
+              <h3 className="mb-2 text-sm font-semibold">{SLOT_LABEL_HE[slot]}</h3>
+
+              <RoleEditor
+                label='מפקד חמ"ל'
+                names={prevDay[slot].mefaked_haml}
+                options={mefakedNames.length > 0 ? mefakedNames : allNames}
+                onChange={(i, n) => updatePrev(slot, 'mefaked_haml', i, n)}
+                onAdd={() => addPrevName(slot, 'mefaked_haml')}
+              />
+              <RoleEditor
+                label='סמב"צ'
+                names={prevDay[slot].sambatz}
+                options={sambatzNames.length > 0 ? sambatzNames : allNames}
+                onChange={(i, n) => updatePrev(slot, 'sambatz', i, n)}
+                onAdd={() => addPrevName(slot, 'sambatz')}
+              />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="mx-4 mb-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={handleRun}
+          disabled={loading || running || submissions.length === 0}
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-40"
+        >
+          {running ? 'מחשב…' : 'הרצת שיבוץ'}
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!assignments || saving}
+          className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-40"
+        >
+          {saving ? 'שומר…' : 'שמירה לגיליון'}
+        </button>
+        <div className="ml-auto self-center text-xs text-slate-600">
+          {submissions.length} חיילים הגישו השבוע
+        </div>
+      </div>
+
+      {warnings.length > 0 && (
+        <section className="mx-4 my-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 shadow-sm">
+          <h3 className="mb-1 font-bold">התראות פשרה</h3>
+          <ul className="list-disc pr-5">
+            {warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {assignments && (
+        <section className="mx-4 my-3 overflow-x-auto rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+          <h2 className="mb-3 font-bold">שיבוץ שבועי</h2>
+          {week.days.map((d) => (
+            <div key={d} className="mb-3">
+              <h3 className="mb-1 text-sm font-semibold">{formatDayShort(d)}</h3>
+              <table className="w-full table-fixed border-collapse text-sm">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-700">
+                    <th className="w-32 border border-slate-200 p-2 text-right">משמרת</th>
+                    <th className="border border-slate-200 p-2 text-right">מפקד חמ&quot;ל</th>
+                    <th className="border border-slate-200 p-2 text-right">סמב&quot;צ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {SHIFT_ORDER.map((slot) => {
+                    const block = assignments[d]![slot];
+                    return (
+                      <tr key={slot}>
+                        <td className="border border-slate-200 bg-slate-50 p-2 font-medium">
+                          {SLOT_LABEL_HE[slot]}
+                        </td>
+                        <td className="border border-slate-200 p-2 whitespace-pre-line">
+                          {block.mefaked_haml.join('\n') || '—'}
+                        </td>
+                        <td className="border border-slate-200 p-2 whitespace-pre-line">
+                          {block.sambatz.join('\n') || '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+          <h3 className="mt-4 mb-2 font-semibold">איזון משמרות</h3>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr className="bg-slate-100 text-slate-700">
+                <th className="border border-slate-200 p-2 text-right">שם</th>
+                <th className="border border-slate-200 p-2 text-right">תפקיד</th>
+                <th className="border border-slate-200 p-2 text-right">משמרות</th>
+              </tr>
+            </thead>
+            <tbody>
+              {submissions
+                .slice()
+                .sort((a, b) => (countsByPhone[b.phone] ?? 0) - (countsByPhone[a.phone] ?? 0))
+                .map((s) => (
+                  <tr key={s.phone}>
+                    <td className="border border-slate-200 p-2">{s.name}</td>
+                    <td className="border border-slate-200 p-2">
+                      {s.position === 'mefaked_haml' ? 'מפקד חמ"ל' : 'סמב"צ'}
+                    </td>
+                    <td className="border border-slate-200 p-2">{countsByPhone[s.phone] ?? 0}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function RoleEditor(props: {
+  label: string;
+  names: string[];
+  options: string[];
+  onChange: (i: number, name: string) => void;
+  onAdd: () => void;
+}) {
+  return (
+    <div className="mb-2">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-slate-700">{props.label}</span>
+        <button
+          type="button"
+          onClick={props.onAdd}
+          className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-700 ring-1 ring-slate-200"
+        >
+          + הוספה
+        </button>
+      </div>
+      {props.names.length === 0 && (
+        <p className="text-xs text-slate-400">אין משובצים</p>
+      )}
+      {props.names.map((n, i) => (
+        <select
+          key={i}
+          value={n}
+          onChange={(e) => props.onChange(i, e.target.value)}
+          className="mb-1 w-full rounded border border-slate-300 bg-white p-1 text-sm"
+        >
+          <option value="">— בחר —</option>
+          {props.options.map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+          {n && !props.options.includes(n) && <option value={n}>{n}</option>}
+        </select>
+      ))}
+    </div>
+  );
+}
+
+function toSchedPrev(dto: PrevDayAssignmentsDTO): PrevDayAssignments {
+  return {
+    morning: { mefaked_haml: dto.morning.mefaked_haml ?? [], sambatz: dto.morning.sambatz ?? [] },
+    afternoon: { mefaked_haml: dto.afternoon.mefaked_haml ?? [], sambatz: dto.afternoon.sambatz ?? [] },
+    night: { mefaked_haml: dto.night.mefaked_haml ?? [], sambatz: dto.night.sambatz ?? [] },
+  };
+}
+
+function toSchedAssignments(dto: WeekAssignmentsDTO, days: string[]): WeekAssignments {
+  const out: WeekAssignments = {};
+  for (const d of days) {
+    const day = dto[d];
+    out[d] = {
+      morning: { mefaked_haml: day?.morning?.mefaked_haml ?? [], sambatz: day?.morning?.sambatz ?? [] },
+      afternoon: { mefaked_haml: day?.afternoon?.mefaked_haml ?? [], sambatz: day?.afternoon?.sambatz ?? [] },
+      night: { mefaked_haml: day?.night?.mefaked_haml ?? [], sambatz: day?.night?.sambatz ?? [] },
+    };
+  }
+  return out;
+}
+
+function toDtoAssignments(a: WeekAssignments, days: string[]): WeekAssignmentsDTO {
+  const out: WeekAssignmentsDTO = {};
+  for (const d of days) {
+    const day = a[d]!;
+    out[d] = {
+      morning: day.morning,
+      afternoon: day.afternoon,
+      night: day.night,
+    };
+  }
+  return out;
+}
+
+export default function AlgoPage() {
+  return (
+    <I18nProvider>
+      <AlgoPageInner />
+    </I18nProvider>
+  );
+}

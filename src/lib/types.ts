@@ -40,3 +40,29 @@ export interface ApiResponse {
   reason?: 'invalid' | 'server_error' | 'locked';
   submission?: Submission;
 }
+
+export interface SlotAssignmentDTO {
+  mefaked_haml: string[];
+  sambatz: string[];
+}
+
+export interface PrevDayAssignmentsDTO {
+  morning: SlotAssignmentDTO;
+  afternoon: SlotAssignmentDTO;
+  night: SlotAssignmentDTO;
+}
+
+export type WeekAssignmentsDTO = Record<string, Record<ShiftSlot, SlotAssignmentDTO>>;
+
+export interface AlgoLoadResponse {
+  ok: boolean;
+  weekStart: string;
+  prevDay: PrevDayAssignmentsDTO | null;
+  current: WeekAssignmentsDTO | null;
+}
+
+export interface AlgoSavePayload {
+  mode: 'algo';
+  weekStart: string;
+  assignments: WeekAssignmentsDTO;
+}

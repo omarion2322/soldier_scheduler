@@ -279,6 +279,25 @@ function doGet(e) {
       rebuildShiftsTab_(sheet, week);
       return jsonResponse_({ ok: true, removed: removed });
     }
+    if (mode === 'weekSubmissions') {
+      const week = (e && e.parameter && e.parameter.week) || '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || !weekIndexFor_(week)) {
+        return jsonResponse_({ ok: false, reason: 'invalid' });
+      }
+      return jsonResponse_({ ok: true, submissions: readAllSubmissions_(week) });
+    }
+    if (mode === 'algo') {
+      const week = (e && e.parameter && e.parameter.week) || '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || !weekIndexFor_(week)) {
+        return jsonResponse_({ ok: false, reason: 'invalid' });
+      }
+      return jsonResponse_({
+        ok: true,
+        weekStart: week,
+        prevDay: readPrevDayForWeek_(week),
+        current: readCurrentAssignmentsForWeek_(week),
+      });
+    }
     const phone = (e && e.parameter && e.parameter.phone) || '';
     const week = (e && e.parameter && e.parameter.week) || '';
     if (!phone || !week) {
@@ -294,6 +313,9 @@ function doGet(e) {
 function doPost(e) {
   try {
     const body = JSON.parse(e.postData.contents);
+    if (body && body.mode === 'algo') {
+      return handleAlgoSave_(body);
+    }
     const phone = canonPhone_(body.phone || '');
     const name = String(body.name || '').trim();
     const position = String(body.position || '').trim();
@@ -765,4 +787,187 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
   sheet.setColumnWidth(COL_SAMBATZ_R, 200);
   sheet.setFrozenRows(1);
   sheet.setHiddenGridlines(true);
+}
+
+// =====================================================================
+// /algo endpoints
+// =====================================================================
+
+function readAllSubmissions_(weekStart) {
+  const sheet = getWeekSheet_(weekStart);
+  if (!sheet) return [];
+  const last = sheet.getLastRow();
+  if (last < 2) return [];
+  const headers = buildHeaders_(weekStart);
+  const totalCols = headers.length;
+  const values = sheet.getRange(2, 1, last - 1, totalCols).getValues();
+  const display = sheet.getRange(2, 1, last - 1, totalCols).getDisplayValues();
+  const days = weekDaysFor_(weekStart);
+  const FIXED = FIXED_HEADERS.length;
+
+  const latestByPhone = {};
+  values.forEach(function (r, i) {
+    const phoneDigits = canonPhone_(display[i][1] || '') || canonPhone_(r[1] || '');
+    if (!phoneDigits) return;
+    const ts = String(r[0] || display[i][0] || '');
+    const cur = latestByPhone[phoneDigits];
+    if (!cur || ts > cur.ts) latestByPhone[phoneDigits] = { row: r, ts: ts };
+  });
+
+  const out = [];
+  Object.keys(latestByPhone).forEach(function (phone) {
+    const r = latestByPhone[phone].row;
+    const position = String(r[3] || '').trim();
+    if (position !== 'mefaked_haml' && position !== 'sambatz') return;
+    const shifts = {};
+    days.forEach(function (d, dayIdx) {
+      const cells = {};
+      SLOTS.forEach(function (slot, slotIdx) {
+        const v = String(r[FIXED + dayIdx * SLOTS.length + slotIdx]).trim();
+        cells[slot] = (v === '1' || v === 'can') ? 'can' : 'cant';
+      });
+      shifts[d] = cells;
+    });
+    out.push({
+      phone: phone,
+      name: String(r[2] || '').trim(),
+      position: position,
+      weekStart: weekStart,
+      unavailableDays: [],
+      shifts: shifts,
+      submittedAt: latestByPhone[phone].ts,
+    });
+  });
+  return out;
+}
+
+function parseNames_(cellValue) {
+  return String(cellValue || '')
+    .split(/\r?\n|,/)
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; });
+}
+
+function readShiftsTabAssignments_(weekStart) {
+  // Returns { [date]: { morning|afternoon|night: { mefaked_haml:[], sambatz:[] } } }
+  // from the right-side שיבוץ block of the Week N Shifts tab.
+  const tabName = shiftsTabNameFor_(weekStart);
+  if (!tabName) return null;
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sheet = ss.getSheetByName(tabName);
+  if (!sheet) return null;
+  const days = weekDaysFor_(weekStart);
+  const out = {};
+  for (let k = 0; k < days.length; k += 1) {
+    const dayStart = 3 + k * 7;
+    out[days[k]] = {};
+    for (let s = 0; s < SLOTS.length; s += 1) {
+      const row = dayStart + 3 + s;
+      const mefaked = parseNames_(sheet.getRange(row, 6).getValue());
+      const sambatz = parseNames_(sheet.getRange(row, 7).getValue());
+      out[days[k]][SLOTS[s]] = { mefaked_haml: mefaked, sambatz: sambatz };
+    }
+  }
+  return out;
+}
+
+function readCurrentAssignmentsForWeek_(weekStart) {
+  const data = readShiftsTabAssignments_(weekStart);
+  if (!data) return null;
+  // If everything is empty, return null so the UI doesn't show "loaded" needlessly.
+  const days = Object.keys(data);
+  let any = false;
+  for (const d of days) {
+    for (const s of SLOTS) {
+      if (data[d][s].mefaked_haml.length || data[d][s].sambatz.length) {
+        any = true; break;
+      }
+    }
+    if (any) break;
+  }
+  return any ? data : null;
+}
+
+function prevWeekStart_(weekStart) {
+  const candidate = addDaysIso_(weekStart, -7);
+  if (candidate < SCHEDULE_START_ISO) return '';
+  if (!weekIndexFor_(candidate)) return '';
+  return candidate;
+}
+
+function readPrevDayForWeek_(weekStart) {
+  // Previous Wednesday = day before weekStart. If a previous week exists in our
+  // schedule, that Wednesday is the LAST day of that week, and its assignments
+  // are stored in the previous week's Shifts tab. Return null when there is
+  // no previous week.
+  const prev = prevWeekStart_(weekStart);
+  if (!prev) return null;
+  const data = readShiftsTabAssignments_(prev);
+  if (!data) return null;
+  const prevWedDate = addDaysIso_(weekStart, -1);
+  const day = data[prevWedDate];
+  if (!day) return null;
+  const morning = day.morning || { mefaked_haml: [], sambatz: [] };
+  const afternoon = day.afternoon || { mefaked_haml: [], sambatz: [] };
+  const night = day.night || { mefaked_haml: [], sambatz: [] };
+  if (
+    morning.mefaked_haml.length === 0 && morning.sambatz.length === 0 &&
+    afternoon.mefaked_haml.length === 0 && afternoon.sambatz.length === 0 &&
+    night.mefaked_haml.length === 0 && night.sambatz.length === 0
+  ) {
+    return null;
+  }
+  return { morning: morning, afternoon: afternoon, night: night };
+}
+
+function handleAlgoSave_(body) {
+  const weekStart = String(body.weekStart || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || !weekIndexFor_(weekStart)) {
+    return jsonResponse_({ ok: false, reason: 'invalid' });
+  }
+  if (isWeekLocked_(weekStart)) {
+    return jsonResponse_({ ok: false, reason: 'locked' });
+  }
+  const assignments = body.assignments || {};
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    // Make sure the shifts tab exists with the current availability layout.
+    const dataSheet = getWeekSheet_(weekStart);
+    if (dataSheet) rebuildShiftsTab_(dataSheet, weekStart);
+
+    const tabName = shiftsTabNameFor_(weekStart);
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const sheet = ss.getSheetByName(tabName);
+    if (!sheet) return jsonResponse_({ ok: false, reason: 'server_error' });
+
+    const days = weekDaysFor_(weekStart);
+    for (let k = 0; k < days.length; k += 1) {
+      const dayStart = 3 + k * 7;
+      const dayAssign = assignments[days[k]] || {};
+      for (let s = 0; s < SLOTS.length; s += 1) {
+        const slot = SLOTS[s];
+        const slotAssign = dayAssign[slot] || { mefaked_haml: [], sambatz: [] };
+        const row = dayStart + 3 + s;
+        const mefakedStr = (slotAssign.mefaked_haml || []).join('\n');
+        const sambatzStr = (slotAssign.sambatz || []).join('\n');
+        sheet.getRange(row, 6).setValue(mefakedStr);
+        sheet.getRange(row, 7).setValue(sambatzStr);
+        const maxNames = Math.max(
+          1,
+          (slotAssign.mefaked_haml || []).length,
+          (slotAssign.sambatz || []).length,
+        );
+        const existingHeight = sheet.getRowHeight(row);
+        const desired = Math.max(36, 18 + maxNames * 18);
+        if (desired > existingHeight) sheet.setRowHeight(row, desired);
+      }
+    }
+    return jsonResponse_({ ok: true });
+  } catch (err) {
+    return jsonResponse_({ ok: false, reason: 'server_error', error: String(err) });
+  } finally {
+    lock.releaseLock();
+  }
 }

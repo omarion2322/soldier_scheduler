@@ -5,6 +5,7 @@ day across 8 weeks (Tue **May 26 → Sat Jul 18, 2026**). Three shifts per day: 
 Afternoon (14–22), Night (22–06). The last week is partial (Tue Jul 14 – Sat Jul 18).
 
 - **Frontend:** React + TypeScript + Vite + Tailwind, hosted on GitHub Pages.
+  Two pages: `/` (soldier preferences form) and `/algo` (admin auto-scheduler).
 - **Storage:** Google Apps Script Web App writing to a Google Sheet. Free, no auth headaches,
   and whoever schedules shifts gets a spreadsheet view of all responses for free.
 - **Identity:** Phone number is the canonical UUID (the name is display only). Soldiers can edit
@@ -80,3 +81,26 @@ apps-script/
 - Soldiers see only their own answers (the backend only reveals submissions matching the phone).
 - A draft is autosaved to `localStorage` per (phone, week) so a refresh doesn't lose progress.
 - The deadline is enforced both client-side (read-only UI) and server-side (Apps Script).
+
+## Auto-scheduler page (`/algo`)
+
+Open at `https://<user>.github.io/soldier_scheduler/algo` (no auth required).
+
+For the selected week the page:
+
+1. Loads every soldier's latest submission via the Apps Script `weekSubmissions` endpoint.
+2. Pre-fills the **previous Wednesday** assignments. For weeks 2+, this is read from the
+   previous week's `Week N Shifts` tab; for the very first week of the schedule the operator
+   enters them manually. Any value can be edited before running.
+3. Runs a greedy constraint solver in the browser:
+   - Per slot: 1 מפקד חמ״ל + 2 סמב״צ (1 + 1 at night).
+   - At least 2 shifts of rest between any soldier's consecutive assignments.
+   - Even balance via min-count tie-break.
+   - Relaxations (in order, each adds a visible warning): drop the rest gap to 1 → swap a
+     missing role with the other position → leave the slot under-filled.
+4. Shows the resulting schedule plus a per-soldier shift count.
+5. **Save to sheet** writes the result into the right-side `שיבוץ` block of the matching
+   `Week N Shifts` tab (overwriting whatever was there).
+
+The build also emits `dist/404.html` (a copy of `index.html`) so GitHub Pages serves the SPA
+on a direct refresh of `/algo`.

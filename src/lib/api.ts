@@ -1,4 +1,9 @@
-import type { ApiResponse, Submission } from './types';
+import type {
+  AlgoLoadResponse,
+  AlgoSavePayload,
+  ApiResponse,
+  Submission,
+} from './types';
 
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
@@ -48,4 +53,47 @@ export async function postSubmission(submission: Submission): Promise<ApiRespons
     return { ok: false, reason: 'server_error' };
   }
   return (await res.json()) as ApiResponse;
+}
+
+/**
+ * Fetches every soldier's latest submission for the given week. Used by /algo.
+ */
+export async function fetchWeekSubmissions(weekStart: string): Promise<Submission[]> {
+  if (!API_URL) throw new Error('VITE_API_URL is not configured');
+  const url = `${API_URL}?mode=weekSubmissions&week=${encodeURIComponent(weekStart)}`;
+  const res = await fetch(url, { method: 'GET' });
+  if (!res.ok) throw new Error(`Load failed: ${res.status}`);
+  const data = (await res.json()) as { ok: boolean; submissions?: Submission[] };
+  return Array.isArray(data.submissions) ? data.submissions : [];
+}
+
+/**
+ * Loads the previous day's saved assignments (the Wednesday before this week's
+ * Thursday start, read from the prior week's saved shifts tab) plus any existing
+ * assignments already saved for this week.
+ */
+export async function fetchAlgoState(weekStart: string): Promise<AlgoLoadResponse> {
+  if (!API_URL) throw new Error('VITE_API_URL is not configured');
+  const url = `${API_URL}?mode=algo&week=${encodeURIComponent(weekStart)}`;
+  const res = await fetch(url, { method: 'GET' });
+  if (!res.ok) throw new Error(`Load failed: ${res.status}`);
+  return (await res.json()) as AlgoLoadResponse;
+}
+
+/**
+ * Writes the generated schedule into the right-side שיבוץ block of the
+ * Week N Shifts tab. Returns true on success.
+ */
+export async function saveAlgoResult(
+  payload: Omit<AlgoSavePayload, 'mode'>,
+): Promise<boolean> {
+  if (!API_URL) throw new Error('VITE_API_URL is not configured');
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ mode: 'algo', ...payload } satisfies AlgoSavePayload),
+  });
+  if (!res.ok) return false;
+  const data = (await res.json()) as { ok: boolean };
+  return Boolean(data.ok);
 }
