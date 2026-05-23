@@ -214,7 +214,6 @@ function AppInner() {
     <div className="mx-auto flex min-h-full max-w-xl flex-col bg-slate-50">
       <header className="px-4 pb-2 pt-4 text-center">
         <h1 className="text-2xl font-bold">{t('appTitle')}</h1>
-        <p className="mt-1 text-sm text-slate-600">{t('intro')}</p>
       </header>
 
       <IdentityForm
@@ -233,6 +232,18 @@ function AppInner() {
 
       {authenticated && (
         <>
+          <section
+            aria-label={t('instructionsTitle')}
+            className="mx-4 mt-4 rounded-xl border-2 border-blue-300 bg-blue-50 p-4 shadow-sm"
+          >
+            <h2 className="mb-2 text-center text-lg font-bold text-blue-900">
+              {t('instructionsTitle')}
+            </h2>
+            <p className="text-center text-base leading-relaxed text-slate-800">
+              {t('intro')}
+            </p>
+          </section>
+
           <WeekNav weeks={weeks} index={index} onChange={setIndex} />
 
           {weekLocked && (

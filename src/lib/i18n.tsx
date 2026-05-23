@@ -46,6 +46,7 @@ const EN: Dict = {
   weekLockedError: 'This week is locked. Submission rejected.',
   missingIdentity: 'Please enter your name and phone.',
   toggleLang: 'עברית',
+  instructionsTitle: 'Instructions',
 };
 
 const HE: Dict = {
@@ -88,6 +89,7 @@ const HE: Dict = {
   weekLockedError: 'השבוע הזה נעול. ההגשה נדחתה.',
   missingIdentity: 'נא להזין שם וטלפון.',
   toggleLang: 'English',
+  instructionsTitle: 'הוראות',
 };
 
 const DICTS: Record<Lang, Dict> = { en: EN, he: HE };
