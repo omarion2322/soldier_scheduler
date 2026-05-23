@@ -98,15 +98,26 @@ export function cycleShiftState(state: ShiftState): ShiftState {
   return state === 'cant' ? 'can' : 'cant';
 }
 
-const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 const MONTH_LABELS = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
 ] as const;
 
+const WEEKDAY_LABELS_HE = [
+  'יום ראשון',
+  'יום שני',
+  'יום שלישי',
+  'יום רביעי',
+  'יום חמישי',
+  'יום שישי',
+  'שבת',
+] as const;
+
 export function formatDayShort(iso: string): string {
   const d = parseISODate(iso);
-  return `${WEEKDAY_LABELS[d.getUTCDay()]} ${MONTH_LABELS[d.getUTCMonth()]} ${d.getUTCDate()}`;
+  const day = d.getUTCDate();
+  const month = d.getUTCMonth() + 1;
+  return `${WEEKDAY_LABELS_HE[d.getUTCDay()]} ${day}/${month}`;
 }
 
 export function formatWeekRange(week: Week): string {

@@ -77,7 +77,7 @@ describe('cycleShiftState', () => {
 
 describe('formatters', () => {
   it('formats day short', () => {
-    expect(formatDayShort('2026-05-28')).toBe('Thu May 28');
+    expect(formatDayShort('2026-05-28')).toBe('יום חמישי 28/5');
   });
 
   it('formats week range same month', () => {
