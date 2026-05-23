@@ -1,7 +1,7 @@
 import type { DayShifts, ShiftSlot, ShiftState, Week } from './types';
 
-const SCHEDULE_START_ISO = '2026-05-26';
-const SCHEDULE_END_ISO = '2026-07-18';
+const SCHEDULE_START_ISO = '2026-05-28';
+const SCHEDULE_END_ISO = '2026-07-16';
 
 export const SCHEDULE_TIMEZONE = 'Asia/Jerusalem';
 
@@ -34,8 +34,13 @@ export function generateWeeks(): Week[] {
   let cursor = SCHEDULE_START_ISO;
   let index = 0;
   while (cursor <= SCHEDULE_END_ISO) {
-    const fullEnd = addDays(cursor, 6);
-    const end = fullEnd <= SCHEDULE_END_ISO ? fullEnd : SCHEDULE_END_ISO;
+    let end = addDays(cursor, 6);
+    if (end > SCHEDULE_END_ISO) end = SCHEDULE_END_ISO;
+    // Absorb a trailing short remainder into this week instead of emitting a
+    // stub week with < 7 days.
+    if (end < SCHEDULE_END_ISO && addDays(end, 7) > SCHEDULE_END_ISO) {
+      end = SCHEDULE_END_ISO;
+    }
     const days: string[] = [];
     let d = cursor;
     while (d <= end) {
@@ -43,6 +48,7 @@ export function generateWeeks(): Week[] {
       d = addDays(d, 1);
     }
     weeks.push({ index, start: cursor, end, days });
+    if (end >= SCHEDULE_END_ISO) break;
     cursor = addDays(cursor, 7);
     index += 1;
   }

@@ -32,8 +32,8 @@
 const SHEET_ID = '1RQEXiMVyHqXV75j_gm0qT_1QobtC-TtNrwDxCYxyf2Q';
 const LOCKS_TAB = 'locks';
 
-const SCHEDULE_START_ISO = '2026-05-26';
-const SCHEDULE_END_ISO = '2026-07-18';
+const SCHEDULE_START_ISO = '2026-05-28';
+const SCHEDULE_END_ISO = '2026-07-16';
 
 const FIXED_HEADERS = ['submittedAt', 'phone', 'name', 'position', 'weekStart'];
 const SLOTS = ['morning', 'afternoon', 'night'];
@@ -75,6 +75,9 @@ function formatMonthDay_(iso) {
 function weekIndexFor_(weekStart) {
   // Returns 1-based index, or 0 if invalid.
   if (weekStart < SCHEDULE_START_ISO || weekStart > SCHEDULE_END_ISO) return 0;
+  // Reject would-be starts whose normal 7-day window overruns the schedule end
+  // (these are absorbed into the previous week and are not real starts).
+  if (addDaysIso_(weekStart, 6) > SCHEDULE_END_ISO) return 0;
   const a = new Date(SCHEDULE_START_ISO + 'T00:00:00Z').getTime();
   const b = new Date(weekStart + 'T00:00:00Z').getTime();
   const diffDays = Math.round((b - a) / 86400000);
@@ -82,19 +85,27 @@ function weekIndexFor_(weekStart) {
   return Math.floor(diffDays / 7) + 1;
 }
 
+function weekEndFor_(weekStart) {
+  let end = addDaysIso_(weekStart, 6);
+  if (end > SCHEDULE_END_ISO) end = SCHEDULE_END_ISO;
+  // Absorb a trailing short remainder into this week.
+  if (end < SCHEDULE_END_ISO && addDaysIso_(end, 7) > SCHEDULE_END_ISO) {
+    end = SCHEDULE_END_ISO;
+  }
+  return end;
+}
+
 function tabNameFor_(weekStart) {
   const idx = weekIndexFor_(weekStart);
   if (!idx) return '';
-  const fullEnd = addDaysIso_(weekStart, 6);
-  const end = fullEnd <= SCHEDULE_END_ISO ? fullEnd : SCHEDULE_END_ISO;
+  const end = weekEndFor_(weekStart);
   return 'Week ' + idx + ' (' + formatMonthDay_(weekStart) + '-' + formatMonthDay_(end) + ')';
 }
 
 function shiftsTabNameFor_(weekStart) {
   const idx = weekIndexFor_(weekStart);
   if (!idx) return '';
-  const fullEnd = addDaysIso_(weekStart, 6);
-  const end = fullEnd <= SCHEDULE_END_ISO ? fullEnd : SCHEDULE_END_ISO;
+  const end = weekEndFor_(weekStart);
   return 'Week ' + idx + ' Shifts (' + formatMonthDay_(weekStart) + '-' + formatMonthDay_(end) + ')';
 }
 
@@ -105,10 +116,11 @@ function isoToDDMM_(iso) {
 
 function weekDaysFor_(weekStart) {
   const days = [];
-  for (let i = 0; i < 7; i += 1) {
-    const d = addDaysIso_(weekStart, i);
-    if (d > SCHEDULE_END_ISO) break;
+  const end = weekEndFor_(weekStart);
+  let d = weekStart;
+  while (d <= end) {
     days.push(d);
+    d = addDaysIso_(d, 1);
   }
   return days;
 }
@@ -172,6 +184,7 @@ function allWeekStarts_() {
   let d = SCHEDULE_START_ISO;
   while (d <= SCHEDULE_END_ISO) {
     out.push(d);
+    if (weekEndFor_(d) >= SCHEDULE_END_ISO) break;
     d = addDaysIso_(d, 7);
   }
   return out;
