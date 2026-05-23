@@ -351,7 +351,12 @@ function AlgoPageInner() {
               </thead>
               <tbody>
                 {SHIFT_ORDER.map((slot) => {
-                  const block = assignments[d]![slot];
+                  const day = assignments[d] ?? {
+                    morning: { mefaked_haml: [], sambatz: [] },
+                    afternoon: { mefaked_haml: [], sambatz: [] },
+                    night: { mefaked_haml: [], sambatz: [] },
+                  };
+                  const block = day[slot];
                   const demand = slot === 'night' ? { m: 1, s: 1 } : { m: 1, s: 2 };
                   return (
                     <tr key={slot}>
