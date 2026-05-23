@@ -18,6 +18,18 @@ const SLOT_LABEL_HE: Record<ShiftSlot, string> = {
   night: 'לילה (22–06)',
 };
 
+function emptyAssignmentsFor(days: string[]): WeekAssignments {
+  const out: WeekAssignments = {};
+  for (const d of days) {
+    out[d] = {
+      morning: { mefaked_haml: [], sambatz: [] },
+      afternoon: { mefaked_haml: [], sambatz: [] },
+      night: { mefaked_haml: [], sambatz: [] },
+    };
+  }
+  return out;
+}
+
 function emptyPrevDay(): PrevDayAssignments {
   return {
     morning: { mefaked_haml: [], sambatz: [] },
@@ -53,7 +65,7 @@ function AlgoPageInner() {
 
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [prevDay, setPrevDay] = useState<PrevDayAssignments>(() => emptyPrevDay());
-  const [assignments, setAssignments] = useState<WeekAssignments | null>(null);
+  const [assignments, setAssignments] = useState<WeekAssignments>(() => emptyAssignmentsFor(week.days));
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
@@ -74,10 +86,14 @@ function AlgoPageInner() {
     () => submissions.filter((s) => s.position === 'sambatz').map((s) => s.name).sort(),
     [submissions],
   );
+  const submissionsByName = useMemo(() => {
+    const m = new Map<string, Submission>();
+    for (const s of submissions) m.set(s.name, s);
+    return m;
+  }, [submissions]);
 
   const countsByPhone = useMemo(() => {
     const out: Record<string, number> = {};
-    if (!assignments) return out;
     const byName: Record<string, string> = {};
     submissions.forEach((s) => {
       byName[s.name] = s.phone;
@@ -86,6 +102,7 @@ function AlgoPageInner() {
       for (const slot of SHIFT_ORDER) {
         const block = assignments[date]![slot];
         for (const n of [...block.mefaked_haml, ...block.sambatz]) {
+          if (!n) continue;
           const phone = byName[n] ?? n;
           out[phone] = (out[phone] ?? 0) + 1;
         }
@@ -100,7 +117,7 @@ function AlgoPageInner() {
     setLoading(true);
     setError(null);
     setInfo(null);
-    setAssignments(null);
+    setAssignments(emptyAssignmentsFor(week.days));
     setWarnings([]);
     setPrevDay(emptyPrevDay());
     void (async () => {
@@ -135,6 +152,7 @@ function AlgoPageInner() {
         days: week.days,
         soldiers: submissionsToSoldiers(submissions),
         prevDay,
+        locked: assignments,
       });
       setAssignments(res.assignments);
       setWarnings(res.warnings);
@@ -152,8 +170,13 @@ function AlgoPageInner() {
     }
   };
 
+  const handleClear = () => {
+    setAssignments(emptyAssignmentsFor(week.days));
+    setWarnings([]);
+    setInfo(null);
+  };
+
   const handleSave = async () => {
-    if (!assignments) return;
     setSaving(true);
     setError(null);
     try {
@@ -178,6 +201,29 @@ function AlgoPageInner() {
       else arr.splice(i, 1);
       next[slot] = { ...next[slot], [role]: arr };
       return next;
+    });
+  };
+
+  const updateAssignment = (
+    date: string,
+    slot: ShiftSlot,
+    role: 'mefaked_haml' | 'sambatz',
+    i: number,
+    name: string,
+  ) => {
+    setAssignments((prev) => {
+      const day = prev[date] ?? { morning: { mefaked_haml: [], sambatz: [] }, afternoon: { mefaked_haml: [], sambatz: [] }, night: { mefaked_haml: [], sambatz: [] } };
+      const block = day[slot] ?? { mefaked_haml: [], sambatz: [] };
+      const arr = [...block[role]];
+      if (name) arr[i] = name;
+      else arr.splice(i, 1);
+      return {
+        ...prev,
+        [date]: {
+          ...day,
+          [slot]: { ...block, [role]: arr },
+        },
+      };
     });
   };
 
@@ -259,10 +305,17 @@ function AlgoPageInner() {
         <button
           type="button"
           onClick={handleSave}
-          disabled={!assignments || saving}
+          disabled={saving}
           className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-40"
         >
           {saving ? 'שומר…' : 'שמירה לגיליון'}
+        </button>
+        <button
+          type="button"
+          onClick={handleClear}
+          className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm"
+        >
+          ניקוי
         </button>
         <div className="ml-auto self-center text-xs text-slate-600">
           {submissions.length} חיילים הגישו השבוע
@@ -280,71 +333,143 @@ function AlgoPageInner() {
         </section>
       )}
 
-      {assignments && (
-        <section className="mx-4 my-3 overflow-x-auto rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-          <h2 className="mb-3 font-bold">שיבוץ שבועי</h2>
-          {week.days.map((d) => (
-            <div key={d} className="mb-3">
-              <h3 className="mb-1 text-sm font-semibold">{formatDayShort(d)}</h3>
-              <table className="w-full table-fixed border-collapse text-sm">
-                <thead>
-                  <tr className="bg-slate-100 text-slate-700">
-                    <th className="w-32 border border-slate-200 p-2 text-right">משמרת</th>
-                    <th className="border border-slate-200 p-2 text-right">מפקד חמ&quot;ל</th>
-                    <th className="border border-slate-200 p-2 text-right">סמב&quot;צ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {SHIFT_ORDER.map((slot) => {
-                    const block = assignments[d]![slot];
-                    return (
-                      <tr key={slot}>
-                        <td className="border border-slate-200 bg-slate-50 p-2 font-medium">
-                          {SLOT_LABEL_HE[slot]}
-                        </td>
-                        <td className="border border-slate-200 p-2 whitespace-pre-line">
-                          {block.mefaked_haml.join('\n') || '—'}
-                        </td>
-                        <td className="border border-slate-200 p-2 whitespace-pre-line">
-                          {block.sambatz.join('\n') || '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ))}
+      <section className="mx-4 my-3 overflow-x-auto rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <h2 className="mb-1 font-bold">שיבוץ שבועי</h2>
+        <p className="mb-3 text-xs text-slate-600">
+          כל שם שתכניסו לטבלה הופך לאילוץ קשה — האלגוריתם ישבץ את שאר התאים מסביבו ולא יזיז אותו.
+        </p>
+        {week.days.map((d) => (
+          <div key={d} className="mb-3">
+            <h3 className="mb-1 text-sm font-semibold">{formatDayShort(d)}</h3>
+            <table className="w-full table-fixed border-collapse text-sm">
+              <thead>
+                <tr className="bg-slate-100 text-slate-700">
+                  <th className="w-32 border border-slate-200 p-2 text-right">משמרת</th>
+                  <th className="border border-slate-200 p-2 text-right">מפקד חמ&quot;ל</th>
+                  <th className="border border-slate-200 p-2 text-right">סמב&quot;צ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {SHIFT_ORDER.map((slot) => {
+                  const block = assignments[d]![slot];
+                  const demand = slot === 'night' ? { m: 1, s: 1 } : { m: 1, s: 2 };
+                  return (
+                    <tr key={slot}>
+                      <td className="border border-slate-200 bg-slate-50 p-2 font-medium">
+                        {SLOT_LABEL_HE[slot]}
+                      </td>
+                      <td className="border border-slate-200 p-2 align-top">
+                        <SlotCellEditor
+                          names={block.mefaked_haml}
+                          slots={Math.max(demand.m, block.mefaked_haml.length)}
+                          options={mefakedNames}
+                          date={d}
+                          slot={slot}
+                          submissionsByName={submissionsByName}
+                          onChange={(i, n) => updateAssignment(d, slot, 'mefaked_haml', i, n)}
+                        />
+                      </td>
+                      <td className="border border-slate-200 p-2 align-top">
+                        <SlotCellEditor
+                          names={block.sambatz}
+                          slots={Math.max(demand.s, block.sambatz.length)}
+                          options={sambatzNames}
+                          date={d}
+                          slot={slot}
+                          submissionsByName={submissionsByName}
+                          onChange={(i, n) => updateAssignment(d, slot, 'sambatz', i, n)}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ))}
 
-          <h3 className="mt-4 mb-2 font-semibold">איזון משמרות</h3>
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-slate-100 text-slate-700">
-                <th className="border border-slate-200 p-2 text-right">שם</th>
-                <th className="border border-slate-200 p-2 text-right">תפקיד</th>
-                <th className="border border-slate-200 p-2 text-right">משמרות</th>
-              </tr>
-            </thead>
-            <tbody>
-              {submissions
-                .slice()
-                .sort((a, b) => (countsByPhone[b.phone] ?? 0) - (countsByPhone[a.phone] ?? 0))
-                .map((s) => (
-                  <tr key={s.phone}>
-                    <td className="border border-slate-200 p-2">{s.name}</td>
-                    <td className="border border-slate-200 p-2">
-                      {s.position === 'mefaked_haml' ? 'מפקד חמ"ל' : 'סמב"צ'}
-                    </td>
-                    <td className="border border-slate-200 p-2">{countsByPhone[s.phone] ?? 0}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </section>
-      )}
+        <h3 className="mt-4 mb-2 font-semibold">איזון משמרות</h3>
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-slate-100 text-slate-700">
+              <th className="border border-slate-200 p-2 text-right">שם</th>
+              <th className="border border-slate-200 p-2 text-right">תפקיד</th>
+              <th className="border border-slate-200 p-2 text-right">משמרות</th>
+            </tr>
+          </thead>
+          <tbody>
+            {submissions
+              .slice()
+              .sort((a, b) => (countsByPhone[b.phone] ?? 0) - (countsByPhone[a.phone] ?? 0))
+              .map((s) => (
+                <tr key={s.phone}>
+                  <td className="border border-slate-200 p-2">{s.name}</td>
+                  <td className="border border-slate-200 p-2">
+                    {s.position === 'mefaked_haml' ? 'מפקד חמ"ל' : 'סמב"צ'}
+                  </td>
+                  <td className="border border-slate-200 p-2">{countsByPhone[s.phone] ?? 0}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </section>
     </div>
   );
 }
+
+function SlotCellEditor(props: {
+  names: string[];
+  slots: number;
+  options: string[];
+  date: string;
+  slot: ShiftSlot;
+  submissionsByName: Map<string, Submission>;
+  onChange: (i: number, name: string) => void;
+}) {
+  const rows: Array<string> = [];
+  for (let i = 0; i < props.slots; i += 1) rows.push(props.names[i] ?? '');
+  return (
+    <div className="flex flex-col gap-1">
+      {rows.map((n, i) => {
+        const isLocked = (props.names[i] ?? '').length > 0;
+        return (
+          <select
+            key={i}
+            value={n}
+            onChange={(e) => props.onChange(i, e.target.value)}
+            className={`w-full rounded border p-1 text-sm ${
+              isLocked ? 'border-amber-400 bg-amber-50 font-medium' : 'border-slate-300 bg-white'
+            }`}
+            title={isLocked ? 'אילוץ קשה — לא יוזז על ידי האלגוריתם' : undefined}
+          >
+            <option value="">— ריק —</option>
+            {props.options.map((opt) => {
+              const sub = props.submissionsByName.get(opt);
+              const slotState = sub?.shifts?.[props.date]?.[props.slot];
+              const cant = slotState === 'cant';
+              const unavailable = sub?.unavailableDays?.includes(props.date);
+              const marker = cant || unavailable ? '⛔ ' : '';
+              return (
+                <option key={opt} value={opt}>
+                  {marker}
+                  {opt}
+                </option>
+              );
+            })}
+            {n && !props.options.includes(n) && <option value={n}>{n}</option>}
+          </select>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => props.onChange(props.slots, '')}
+        className="hidden"
+        aria-hidden="true"
+      />
+    </div>
+  );
+}
+
 
 function RoleEditor(props: {
   label: string;

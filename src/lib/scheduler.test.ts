@@ -135,4 +135,75 @@ describe('generateSchedule', () => {
     const res = generateSchedule({ days: DAYS, soldiers, prevDay: null });
     expect(res.unfilled.length).toBeGreaterThan(0);
   });
+
+  it('preserves locked assignments and fills around them', () => {
+    const soldiers: SchedulerSoldier[] = [
+      makeSoldier('m1', 'Alice', 'mefaked_haml', DAYS),
+      makeSoldier('m2', 'Bob', 'mefaked_haml', DAYS),
+      makeSoldier('m3', 'Cal', 'mefaked_haml', DAYS),
+      makeSoldier('s1', 'Carol', 'sambatz', DAYS),
+      makeSoldier('s2', 'Dan', 'sambatz', DAYS),
+      makeSoldier('s3', 'Eve', 'sambatz', DAYS),
+      makeSoldier('s4', 'Faye', 'sambatz', DAYS),
+    ];
+    const locked = {
+      [DAYS[0]!]: {
+        morning: { mefaked_haml: ['Alice'], sambatz: ['Carol'] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+      [DAYS[1]!]: {
+        morning: { mefaked_haml: [], sambatz: [] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+      [DAYS[2]!]: {
+        morning: { mefaked_haml: [], sambatz: [] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+    };
+    const res = generateSchedule({ days: DAYS, soldiers, prevDay: null, locked });
+
+    // Locked entries stay in place.
+    expect(res.assignments[DAYS[0]!]!.morning.mefaked_haml).toContain('Alice');
+    expect(res.assignments[DAYS[0]!]!.morning.sambatz).toContain('Carol');
+    // Demand for morning sambatz (2) is filled by adding one more, never displacing Carol.
+    expect(res.assignments[DAYS[0]!]!.morning.sambatz).toHaveLength(2);
+    expect(res.assignments[DAYS[0]!]!.morning.mefaked_haml).toHaveLength(1);
+
+    // Alice locked at idx 0. Strict gap (>=3) blocks her until day 1 morning (idx 3).
+    expect(res.assignments[DAYS[0]!]!.afternoon.mefaked_haml).not.toContain('Alice');
+  });
+
+  it('reduces remaining demand when more than one role slot is locked', () => {
+    const soldiers: SchedulerSoldier[] = [
+      makeSoldier('m1', 'Alice', 'mefaked_haml', DAYS),
+      makeSoldier('m2', 'Bob', 'mefaked_haml', DAYS),
+      makeSoldier('s1', 'Carol', 'sambatz', DAYS),
+      makeSoldier('s2', 'Dan', 'sambatz', DAYS),
+      makeSoldier('s3', 'Eve', 'sambatz', DAYS),
+    ];
+    const locked = {
+      [DAYS[0]!]: {
+        morning: { mefaked_haml: [], sambatz: ['Carol', 'Dan'] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+      [DAYS[1]!]: {
+        morning: { mefaked_haml: [], sambatz: [] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+      [DAYS[2]!]: {
+        morning: { mefaked_haml: [], sambatz: [] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+    };
+    const res = generateSchedule({ days: DAYS, soldiers, prevDay: null, locked });
+    // Sambatz demand for morning (2) is already met; algo adds zero more.
+    expect(res.assignments[DAYS[0]!]!.morning.sambatz.sort()).toEqual(['Carol', 'Dan']);
+    expect(res.assignments[DAYS[0]!]!.morning.mefaked_haml).toHaveLength(1);
+  });
 });

@@ -26,6 +26,13 @@ export interface SchedulerInput {
   days: string[];
   soldiers: SchedulerSoldier[];
   prevDay: PrevDayAssignments | null;
+  /**
+   * Pre-existing assignments that must be preserved. Any name already in a
+   * slot is locked: it counts toward composition demand, reserves its index
+   * for the gap constraint, and is never displaced. The scheduler only fills
+   * the remaining vacancies.
+   */
+  locked?: WeekAssignments;
 }
 
 export interface UnfilledSlot {
@@ -62,6 +69,24 @@ function emptyAssignments(days: string[]): WeekAssignments {
   return out;
 }
 
+function cloneAssignmentsFor(days: string[], src?: WeekAssignments): WeekAssignments {
+  const out = emptyAssignments(days);
+  if (!src) return out;
+  for (const d of days) {
+    const day = src[d];
+    if (!day) continue;
+    for (const slot of SHIFT_ORDER) {
+      const block = day[slot];
+      if (!block) continue;
+      out[d]![slot] = {
+        mefaked_haml: [...(block.mefaked_haml ?? [])].filter((n) => n.trim().length > 0),
+        sambatz: [...(block.sambatz ?? [])].filter((n) => n.trim().length > 0),
+      };
+    }
+  }
+  return out;
+}
+
 function shiftDemand(slot: ShiftSlot): { mefaked: number; sambatz: number } {
   return slot === 'night' ? { mefaked: 1, sambatz: 1 } : { mefaked: 1, sambatz: 2 };
 }
@@ -80,25 +105,43 @@ function buildPhoneByName(soldiers: SchedulerSoldier[]): Map<string, string> {
  *   1. Per-slot composition: 1 mefaked_haml + 2 sambatz (1+1 at night).
  *   2. At least 2 shifts of rest between consecutive assignments per person.
  *   3. Balance total shift count across soldiers.
+ * Pre-existing entries in `input.locked` are treated as hard constraints and
+ * never displaced.
  * Relaxations (each adds a warning):
  *   a. Gap drops from 2 to 1.
  *   b. Composition swap (sambatz fills a missing mefaked, or vice-versa).
  *   c. Slot left under-filled.
  */
 export function generateSchedule(input: SchedulerInput): SchedulerResult {
-  const { days, soldiers, prevDay } = input;
-  const assignments = emptyAssignments(days);
+  const { days, soldiers, prevDay, locked } = input;
+  const assignments = cloneAssignmentsFor(days, locked);
   const counts: Record<string, number> = {};
-  const lastShiftIndex: Record<string, number> = {};
+  const takenIndices: Record<string, number[]> = {};
   const warnings: string[] = [];
   const unfilled: UnfilledSlot[] = [];
 
   for (const s of soldiers) counts[s.phone] = 0;
 
-  // Encode prev day as negative indices so the gap constraint extends across the boundary.
-  // morning -> -3, afternoon -> -2, night -> -1 (so night to next-day morning has gap 1).
+  const phoneByName = buildPhoneByName(soldiers);
+
+  function addTakenIndex(phone: string, idx: number) {
+    const arr = takenIndices[phone] ?? [];
+    arr.push(idx);
+    takenIndices[phone] = arr;
+  }
+
+  function gapOk(phone: string, idx: number, minGap: number): boolean {
+    const arr = takenIndices[phone];
+    if (!arr) return true;
+    for (const j of arr) {
+      if (Math.abs(idx - j) < minGap) return false;
+    }
+    return true;
+  }
+
+  // Seed prev-day assignments as negative indices so the rest gap reaches across
+  // the week boundary. morning -> -3, afternoon -> -2, night -> -1.
   if (prevDay) {
-    const phoneByName = buildPhoneByName(soldiers);
     const seed: Array<[ShiftSlot, number]> = [
       ['morning', -3],
       ['afternoon', -2],
@@ -106,13 +149,24 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
     ];
     for (const [slot, idx] of seed) {
       const block = prevDay[slot];
-      const names = [...block.mefaked_haml, ...block.sambatz];
-      for (const name of names) {
+      for (const name of [...block.mefaked_haml, ...block.sambatz]) {
         const phone = phoneByName.get(name.trim());
-        if (!phone) continue;
-        const prev = lastShiftIndex[phone];
-        if (prev === undefined || idx > prev) lastShiftIndex[phone] = idx;
+        if (phone) addTakenIndex(phone, idx);
       }
+    }
+  }
+
+  // Seed locked assignments: counts + taken indices for every pre-placed name.
+  let lockedIndex = 0;
+  for (const date of days) {
+    for (const slot of SHIFT_ORDER) {
+      const block = assignments[date]![slot];
+      for (const name of [...block.mefaked_haml, ...block.sambatz]) {
+        const phone = phoneByName.get(name.trim()) ?? name.trim();
+        addTakenIndex(phone, lockedIndex);
+        counts[phone] = (counts[phone] ?? 0) + 1;
+      }
+      lockedIndex += 1;
     }
   }
 
@@ -132,11 +186,9 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
       if (excludedPhones.has(s.phone)) continue;
       const day = s.availability[date];
       if (!day || day[slot] !== 'can') continue;
-      const last = lastShiftIndex[s.phone];
-      if (last !== undefined && currentIndex - last < minGap) continue;
+      if (!gapOk(s.phone, currentIndex, minGap)) continue;
       out.push(s);
     }
-    // Stable ordering: fewer assignments first, then by phone for determinism.
     out.sort((a, b) => {
       const ca = counts[a.phone] ?? 0;
       const cb = counts[b.phone] ?? 0;
@@ -171,29 +223,39 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
   for (const date of days) {
     for (const slot of SHIFT_ORDER) {
       const demand = shiftDemand(slot);
+      const existing = assignments[date]![slot];
+
+      // Phones already locked here (so we never pick them again for the same slot).
       const taken = new Set<string>();
+      for (const name of [...existing.mefaked_haml, ...existing.sambatz]) {
+        const phone = phoneByName.get(name.trim());
+        if (phone) taken.add(phone);
+      }
 
-      // 1. Try mefaked first with strict-then-relaxed gap.
-      const mefakedPick = pick(date, slot, 'mefaked_haml', shiftIndex, demand.mefaked, taken);
+      const lockedMefaked = existing.mefaked_haml.length;
+      const lockedSambatz = existing.sambatz.length;
+      const needMefaked = Math.max(0, demand.mefaked - lockedMefaked);
+      const needSambatz = Math.max(0, demand.sambatz - lockedSambatz);
+
+      // 1. Mefaked (strict → relaxed).
+      const mefakedPick = pick(date, slot, 'mefaked_haml', shiftIndex, needMefaked, taken);
       mefakedPick.phones.forEach((p) => taken.add(p));
-      let mefakedFilled = mefakedPick.phones.length;
       if (mefakedPick.usedRelaxedGap) {
-        warnings.push(
-          `${date} ${slot}: relaxed rest gap to 1 shift for מפקד חמ"ל.`,
-        );
+        warnings.push(`${date} ${slot}: relaxed rest gap to 1 shift for מפקד חמ"ל.`);
       }
 
-      // 2. Sambatz next.
-      const sambatzPick = pick(date, slot, 'sambatz', shiftIndex, demand.sambatz, taken);
+      // 2. Sambatz.
+      const sambatzPick = pick(date, slot, 'sambatz', shiftIndex, needSambatz, taken);
       sambatzPick.phones.forEach((p) => taken.add(p));
-      let sambatzFilled = sambatzPick.phones.length;
       if (sambatzPick.usedRelaxedGap) {
-        warnings.push(
-          `${date} ${slot}: relaxed rest gap to 1 shift for סמב"צ.`,
-        );
+        warnings.push(`${date} ${slot}: relaxed rest gap to 1 shift for סמב"צ.`);
       }
 
-      // 3. Composition swap as last resort: missing mefaked -> use a sambatz.
+      let mefakedFilled = lockedMefaked + mefakedPick.phones.length;
+      let sambatzFilled = lockedSambatz + sambatzPick.phones.length;
+
+      // 3. Composition swap: missing mefaked -> use a sambatz.
+      const swappedToMefaked: string[] = [];
       if (mefakedFilled < demand.mefaked) {
         const extra = pick(
           date,
@@ -205,15 +267,14 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
         );
         extra.phones.forEach((p) => taken.add(p));
         if (extra.phones.length > 0) {
-          warnings.push(
-            `${date} ${slot}: filled מפקד חמ"ל slot(s) with סמב"צ (composition swap).`,
-          );
-          mefakedPick.phones.push(...extra.phones);
+          warnings.push(`${date} ${slot}: filled מפקד חמ"ל slot(s) with סמב"צ (composition swap).`);
+          swappedToMefaked.push(...extra.phones);
           mefakedFilled += extra.phones.length;
         }
       }
 
-      // 4. Composition swap the other way: missing sambatz -> use a mefaked.
+      // 4. Composition swap the other way.
+      const swappedToSambatz: string[] = [];
       if (sambatzFilled < demand.sambatz) {
         const extra = pick(
           date,
@@ -225,24 +286,26 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
         );
         extra.phones.forEach((p) => taken.add(p));
         if (extra.phones.length > 0) {
-          warnings.push(
-            `${date} ${slot}: filled סמב"צ slot(s) with מפקד חמ"ל (composition swap).`,
-          );
-          sambatzPick.phones.push(...extra.phones);
+          warnings.push(`${date} ${slot}: filled סמב"צ slot(s) with מפקד חמ"ל (composition swap).`);
+          swappedToSambatz.push(...extra.phones);
           sambatzFilled += extra.phones.length;
         }
       }
 
-      // Apply assignments.
-      const mefakedNames = mefakedPick.phones.map((p) => soldiersByPhone.get(p)?.name ?? p);
-      const sambatzNames = sambatzPick.phones.map((p) => soldiersByPhone.get(p)?.name ?? p);
+      const newMefakedPhones = [...mefakedPick.phones, ...swappedToMefaked];
+      const newSambatzPhones = [...sambatzPick.phones, ...swappedToSambatz];
+
+      const newMefakedNames = newMefakedPhones.map((p) => soldiersByPhone.get(p)?.name ?? p);
+      const newSambatzNames = newSambatzPhones.map((p) => soldiersByPhone.get(p)?.name ?? p);
+
       assignments[date]![slot] = {
-        mefaked_haml: mefakedNames,
-        sambatz: sambatzNames,
+        mefaked_haml: [...existing.mefaked_haml, ...newMefakedNames],
+        sambatz: [...existing.sambatz, ...newSambatzNames],
       };
-      for (const p of [...mefakedPick.phones, ...sambatzPick.phones]) {
+
+      for (const p of [...newMefakedPhones, ...newSambatzPhones]) {
         counts[p] = (counts[p] ?? 0) + 1;
-        lastShiftIndex[p] = shiftIndex;
+        addTakenIndex(p, shiftIndex);
       }
 
       if (mefakedFilled < demand.mefaked) {
