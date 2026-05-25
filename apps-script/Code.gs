@@ -37,7 +37,7 @@ const SCHEDULE_END_ISO = '2026-07-16';
 
 const FIXED_HEADERS = ['submittedAt', 'phone', 'name', 'position', 'weekStart'];
 const SLOTS = ['morning', 'afternoon', 'night'];
-const TRAILING_HEADERS = ['atHomeDays'];
+const TRAILING_HEADERS = ['atHomeDays', 'reasons'];
 
 const POSITION_LABELS_HE = { mefaked_haml: 'מפקד חמ״ל', sambatz: 'סמב״צ' };
 const SHIFT_TIME_LABELS = {
@@ -368,6 +368,24 @@ function doPost(e) {
       const atHomeDays = Object.keys(unavailableSet).sort().join(', ');
       row.push(atHomeDays);
 
+      // Normalize and serialize reasons: only kept for cant slots on
+      // days that are NOT marked unavailable. Empty/whitespace dropped.
+      const reasonsIn = body.reasons || {};
+      const reasonsOut = {};
+      days.forEach(function (d) {
+        if (unavailableSet[d]) return;
+        const dayReasons = reasonsIn[d] || {};
+        const dayShifts = shiftsIn[d] || {};
+        const cleaned = {};
+        SLOTS.forEach(function (slot) {
+          if (dayShifts[slot] !== 'cant') return;
+          const txt = String(dayReasons[slot] == null ? '' : dayReasons[slot]).trim();
+          if (txt) cleaned[slot] = txt;
+        });
+        if (Object.keys(cleaned).length > 0) reasonsOut[d] = cleaned;
+      });
+      row.push(Object.keys(reasonsOut).length ? JSON.stringify(reasonsOut) : '');
+
       const headers = buildHeaders_(weekStart);
       let targetRow = collapseRowsFor_(sheet, phone);
       if (!targetRow) targetRow = sheet.getLastRow() + 1;
@@ -427,10 +445,21 @@ function readSubmission_(phone, weekStart) {
     shifts[d] = cells;
   });
   const atHomeStr = String(row[col] || '');
+  col += 1;
+  const reasonsStr = String(row[col] || '');
   const unavailableDays = atHomeStr
     ? atHomeStr.split(',').map(function (s) { return s.trim(); })
         .filter(function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); })
     : [];
+  let reasons = {};
+  if (reasonsStr) {
+    try {
+      const parsed = JSON.parse(reasonsStr);
+      if (parsed && typeof parsed === 'object') reasons = parsed;
+    } catch (e) {
+      reasons = {};
+    }
+  }
 
   return {
     phone: phone,
@@ -439,6 +468,7 @@ function readSubmission_(phone, weekStart) {
     weekStart: weekStart,
     unavailableDays: unavailableDays,
     shifts: shifts,
+    reasons: reasons,
     submittedAt: latestTs,
   };
 }
@@ -560,6 +590,10 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     });
   });
 
+  // Collect per-soldier unavailability reasons across the week.
+  // reasonsList: [{ name, position, date, slot, reason }, ...]
+  const reasonsList = [];
+
   const last = dataSheet.getLastRow();
   if (last >= 2) {
     const headers = buildHeaders_(weekStart);
@@ -567,6 +601,7 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     const rows = dataSheet.getRange(2, 1, last - 1, totalCols).getValues();
     const display = dataSheet.getRange(2, 1, last - 1, totalCols).getDisplayValues();
     const FIXED = FIXED_HEADERS.length;
+    const REASONS_COL = FIXED + days.length * SLOTS.length + 1; // 0-based index of 'reasons'
 
     // Keep only the latest row per phone (by submittedAt).
     const latestByPhone = {};
@@ -595,6 +630,24 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
           }
         });
       });
+      // Parse reasons JSON if present and collect entries.
+      const rawReasons = String(r[REASONS_COL] || '').trim();
+      if (rawReasons) {
+        let parsed = null;
+        try { parsed = JSON.parse(rawReasons); } catch (e) { parsed = null; }
+        if (parsed && typeof parsed === 'object') {
+          days.forEach(function (d) {
+            const dayObj = parsed[d];
+            if (!dayObj || typeof dayObj !== 'object') return;
+            SLOTS.forEach(function (slot) {
+              const txt = String(dayObj[slot] == null ? '' : dayObj[slot]).trim();
+              if (txt) reasonsList.push({
+                name: name, position: position, date: d, slot: slot, reason: txt,
+              });
+            });
+          });
+        }
+      }
     });
   }
 
@@ -777,6 +830,70 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     sheet.setRowHeight(curRow, 10); // spacer between days
     curRow += 1;
   });
+
+  // ===== Reasons section =====
+  if (reasonsList.length > 0) {
+    curRow += 1; // gap before reasons block
+
+    const reasonsTitle = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
+    reasonsTitle.merge();
+    reasonsTitle.setValue('סיבות אי-זמינות')
+      .setBackground(COLOR_TITLE_BG)
+      .setFontColor(COLOR_TITLE_FG)
+      .setFontWeight('bold')
+      .setFontSize(14)
+      .setHorizontalAlignment('center')
+      .setVerticalAlignment('middle');
+    sheet.setRowHeight(curRow, 30);
+    curRow += 1;
+
+    // Column headers for the reasons table — spans cols 1..5 (Time..TimeR), leaves 6/7 free.
+    const reasonHeaders = [['שם', 'תפקיד', 'תאריך', 'משמרת', 'סיבה']];
+    const headerRange = sheet.getRange(curRow, 1, 1, 5);
+    headerRange.setValues(reasonHeaders)
+      .setBackground(COLOR_SUBHDR_AVAIL)
+      .setFontWeight('bold')
+      .setFontSize(11)
+      .setHorizontalAlignment('center')
+      .setVerticalAlignment('middle');
+    sheet.setRowHeight(curRow, 24);
+    curRow += 1;
+
+    // Stable order: by name, then chronological by (date, slot).
+    const slotOrder = { morning: 0, afternoon: 1, night: 2 };
+    reasonsList.sort(function (a, b) {
+      if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      return slotOrder[a.slot] - slotOrder[b.slot];
+    });
+
+    const slotLabelsHe = { morning: 'בוקר', afternoon: 'צהריים', night: 'לילה' };
+    reasonsList.forEach(function (entry, i) {
+      const rowValues = [[
+        entry.name,
+        POSITION_LABELS_HE[entry.position] || entry.position,
+        isoToDDMM_(entry.date) + ' (' + DAY_NAMES_HE[new Date(entry.date + 'T00:00:00Z').getUTCDay()] + ')',
+        slotLabelsHe[entry.slot] + ' (' + SHIFT_TIME_LABELS[entry.slot] + ')',
+        entry.reason,
+      ]];
+      const rowRange = sheet.getRange(curRow, 1, 1, 5);
+      rowRange.setValues(rowValues)
+        .setVerticalAlignment('middle')
+        .setHorizontalAlignment('center')
+        .setWrap(true)
+        .setFontSize(11)
+        .setBackground(i % 2 === 0 ? COLOR_BAND_A : COLOR_BAND_B);
+      // Left-align the (often long) reason cell for readability.
+      sheet.getRange(curRow, 5).setHorizontalAlignment('right');
+      const lines = (String(entry.reason).match(/\n/g) || []).length + 1;
+      sheet.setRowHeight(curRow, Math.max(28, 18 + lines * 16));
+      curRow += 1;
+    });
+
+    sheet.getRange(curRow - reasonsList.length - 1, 1, reasonsList.length + 1, 5)
+      .setBorder(true, true, true, true, true, true, COLOR_BORDER,
+        SpreadsheetApp.BorderStyle.SOLID);
+  }
 
   sheet.setColumnWidth(COL_TIME, 110);
   sheet.setColumnWidth(COL_MEFAKED, 180);

@@ -18,6 +18,8 @@ export const SHIFT_SLOTS: readonly ShiftSlotInfo[] = [
 
 export type DayShifts = Record<ShiftSlot, ShiftState>;
 
+export type ReasonsByDate = Record<string, Partial<Record<ShiftSlot, string>>>;
+
 export interface Submission {
   phone: string;
   name: string;
@@ -25,6 +27,7 @@ export interface Submission {
   weekStart: string;
   unavailableDays: string[];
   shifts: Record<string, DayShifts>;
+  reasons?: ReasonsByDate;
   submittedAt?: string;
 }
 

@@ -47,6 +47,9 @@ const EN: Dict = {
   missingIdentity: 'Please enter your name and phone.',
   toggleLang: 'עברית',
   instructionsTitle: 'Instructions',
+  reasonLabel: 'Reason',
+  reasonPlaceholder: 'Why can’t you take this shift?',
+  reasonMissing: 'Please provide a reason for every shift marked Can’t.',
 };
 
 const HE: Dict = {
@@ -90,6 +93,9 @@ const HE: Dict = {
   missingIdentity: 'נא להזין שם וטלפון.',
   toggleLang: 'English',
   instructionsTitle: 'הוראות',
+  reasonLabel: 'סיבה',
+  reasonPlaceholder: 'מדוע אינך זמין למשמרת הזו?',
+  reasonMissing: 'יש למלא סיבה לכל משמרת שסומנה ״לא יכול״.',
 };
 
 const DICTS: Record<Lang, Dict> = { en: EN, he: HE };

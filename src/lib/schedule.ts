@@ -94,6 +94,23 @@ export function normalizeShifts(
   return out;
 }
 
+export function normalizeReasons(
+  raw: Record<string, Partial<Record<ShiftSlot, unknown>>> | undefined,
+): Record<string, Partial<Record<ShiftSlot, string>>> {
+  const out: Record<string, Partial<Record<ShiftSlot, string>>> = {};
+  if (!raw) return out;
+  for (const date of Object.keys(raw)) {
+    const day = raw[date] ?? {};
+    const cleaned: Partial<Record<ShiftSlot, string>> = {};
+    (['morning', 'afternoon', 'night'] as ShiftSlot[]).forEach((slot) => {
+      const v = day[slot];
+      if (typeof v === 'string' && v.trim() !== '') cleaned[slot] = v;
+    });
+    if (Object.keys(cleaned).length > 0) out[date] = cleaned;
+  }
+  return out;
+}
+
 export function cycleShiftState(state: ShiftState): ShiftState {
   return state === 'cant' ? 'can' : 'cant';
 }

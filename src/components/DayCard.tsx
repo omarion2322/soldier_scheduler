@@ -7,9 +7,12 @@ interface Props {
   date: string;
   shifts: DayShifts;
   unavailable: boolean;
+  reasons: Partial<Record<ShiftSlot, string>>;
+  missingReasonSlots: Set<ShiftSlot>;
   readOnly?: boolean;
   onToggleUnavailable: () => void;
   onCycleShift: (slot: ShiftSlot) => void;
+  onChangeReason: (slot: ShiftSlot, reason: string) => void;
 }
 
 const SLOT_LABEL_KEY: Record<ShiftSlot, 'morning' | 'afternoon' | 'night'> = {
@@ -22,9 +25,12 @@ export function DayCard({
   date,
   shifts,
   unavailable,
+  reasons,
+  missingReasonSlots,
   readOnly,
   onToggleUnavailable,
   onCycleShift,
+  onChangeReason,
 }: Props) {
   const { t } = useI18n();
   return (
@@ -43,16 +49,51 @@ export function DayCard({
         </label>
       </header>
       <div className="flex flex-col gap-2">
-        {SHIFT_SLOTS.map((s) => (
-          <ShiftButton
-            key={s.slot}
-            label={t(SLOT_LABEL_KEY[s.slot])}
-            time={s.time}
-            state={shifts[s.slot]}
-            disabled={unavailable || readOnly}
-            onCycle={() => onCycleShift(s.slot)}
-          />
-        ))}
+        {SHIFT_SLOTS.map((s) => {
+          const isCant = shifts[s.slot] === 'cant';
+          const needsReason = isCant && !unavailable;
+          const missing = missingReasonSlots.has(s.slot);
+          return (
+            <div key={s.slot} className="flex flex-col gap-1">
+              <ShiftButton
+                label={t(SLOT_LABEL_KEY[s.slot])}
+                time={s.time}
+                state={shifts[s.slot]}
+                disabled={unavailable || readOnly}
+                onCycle={() => onCycleShift(s.slot)}
+              />
+              {needsReason && (
+                <div className="rounded-lg bg-red-50 px-3 py-2">
+                  <label className="mb-1 block text-sm font-medium text-red-900">
+                    {t('reasonLabel')}
+                    <span aria-hidden="true"> *</span>
+                  </label>
+                  <textarea
+                    value={reasons[s.slot] ?? ''}
+                    onChange={(e) => onChangeReason(s.slot, e.target.value)}
+                    disabled={readOnly}
+                    rows={2}
+                    placeholder={t('reasonPlaceholder')}
+                    aria-invalid={missing || undefined}
+                    aria-label={`${t('reasonLabel')} — ${t(SLOT_LABEL_KEY[s.slot])} ${s.time}`}
+                    className={[
+                      'w-full rounded-md border bg-white px-3 py-2 text-sm',
+                      'focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500',
+                      missing
+                        ? 'border-red-500 ring-1 ring-red-300'
+                        : 'border-red-300',
+                    ].join(' ')}
+                  />
+                  {missing && (
+                    <p className="mt-1 text-xs font-medium text-red-700">
+                      {t('reasonMissing')}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </section>
   );

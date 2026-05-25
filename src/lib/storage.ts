@@ -1,4 +1,4 @@
-import type { DayShifts, Submission } from './types';
+import type { DayShifts, ShiftSlot, Submission } from './types';
 
 const IDENTITY_KEY = 'soldier_scheduler.identity';
 
@@ -33,6 +33,7 @@ function draftKey(phone: string, weekStart: string): string {
 export interface Draft {
   shifts: Record<string, DayShifts>;
   unavailableDays: string[];
+  reasons?: Record<string, Partial<Record<ShiftSlot, string>>>;
 }
 
 export function loadDraft(phone: string, weekStart: string): Draft | null {

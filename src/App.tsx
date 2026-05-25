@@ -8,6 +8,7 @@ import {
   emptyDayShifts,
   generateWeeks,
   getCurrentWeekIndex,
+  normalizeReasons,
   normalizeShifts,
 } from './lib/schedule';
 import type { DayShifts, Position, ShiftSlot, Submission } from './lib/types';
@@ -44,6 +45,10 @@ function AppInner() {
 
   const [shifts, setShifts] = useState<Record<string, DayShifts>>(() => initialShifts(week.days));
   const [unavailable, setUnavailable] = useState<Set<string>>(() => new Set());
+  const [reasons, setReasons] = useState<Record<string, Partial<Record<ShiftSlot, string>>>>(
+    () => ({}),
+  );
+  const [missingReasons, setMissingReasons] = useState<Record<string, Set<ShiftSlot>>>(() => ({}));
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<Toast>(null);
@@ -78,9 +83,13 @@ function AppInner() {
     if (draft) {
       setShifts({ ...empty, ...normalizeShifts(draft.shifts) });
       setUnavailable(new Set(draft.unavailableDays));
+      setReasons(normalizeReasons(draft.reasons));
+      setMissingReasons({});
     } else {
       setShifts(empty);
       setUnavailable(new Set());
+      setReasons({});
+      setMissingReasons({});
       // Fetch existing submission for this new week in the background.
       void (async () => {
         try {
@@ -88,6 +97,7 @@ function AppInner() {
           if (existing) {
             setShifts({ ...empty, ...normalizeShifts(existing.shifts) });
             setUnavailable(new Set(existing.unavailableDays));
+            setReasons(normalizeReasons(existing.reasons));
           }
         } catch {
           /* keep empty on failure */
@@ -102,8 +112,9 @@ function AppInner() {
     saveDraft(normalizedPhone, week.start, {
       shifts,
       unavailableDays: Array.from(unavailable),
+      reasons,
     });
-  }, [authenticated, normalizedPhone, week.start, shifts, unavailable]);
+  }, [authenticated, normalizedPhone, week.start, shifts, unavailable, reasons]);
 
   // Persist identity locally for convenience.
   useEffect(() => {
@@ -116,6 +127,27 @@ function AppInner() {
       const day = prev[date] ?? emptyDayShifts();
       return { ...prev, [date]: { ...day, [slot]: cycleShiftState(day[slot]) } };
     });
+    // If toggling back to 'can', drop any reason for this slot and clear its error.
+    setReasons((prev) => {
+      const day = prev[date] ?? {};
+      const wasCant = (shifts[date]?.[slot] ?? 'can') === 'cant';
+      if (!wasCant) return prev; // becoming cant; leave reason map alone
+      const { [slot]: _drop, ...rest } = day;
+      void _drop;
+      const next = { ...prev };
+      if (Object.keys(rest).length === 0) delete next[date];
+      else next[date] = rest;
+      return next;
+    });
+    setMissingReasons((prev) => {
+      if (!prev[date]?.has(slot)) return prev;
+      const set = new Set(prev[date]);
+      set.delete(slot);
+      const next = { ...prev };
+      if (set.size === 0) delete next[date];
+      else next[date] = set;
+      return next;
+    });
   };
 
   const handleToggleUnavailable = (date: string) => {
@@ -126,6 +158,38 @@ function AppInner() {
       else next.add(date);
       return next;
     });
+    // When the day is marked unavailable, per-slot reasons aren't required;
+    // clear stale validation errors for the whole day.
+    setMissingReasons((prev) => {
+      if (!prev[date]) return prev;
+      const next = { ...prev };
+      delete next[date];
+      return next;
+    });
+  };
+
+  const handleChangeReason = (date: string, slot: ShiftSlot, reason: string) => {
+    if (!authenticated || weekLocked) return;
+    setReasons((prev) => {
+      const day = { ...(prev[date] ?? {}) };
+      if (reason.trim() === '') delete day[slot];
+      else day[slot] = reason;
+      const next = { ...prev };
+      if (Object.keys(day).length === 0) delete next[date];
+      else next[date] = day;
+      return next;
+    });
+    if (reason.trim() !== '') {
+      setMissingReasons((prev) => {
+        if (!prev[date]?.has(slot)) return prev;
+        const set = new Set(prev[date]);
+        set.delete(slot);
+        const next = { ...prev };
+        if (set.size === 0) delete next[date];
+        else next[date] = set;
+        return next;
+      });
+    }
   };
 
   const handleContinue = async () => {
@@ -139,19 +203,24 @@ function AppInner() {
       if (existing) {
         setShifts({ ...empty, ...normalizeShifts(existing.shifts) });
         setUnavailable(new Set(existing.unavailableDays));
+        setReasons(normalizeReasons(existing.reasons));
         if (existing.position) setPosition(existing.position);
         setLoadMessage(t('loadedPrev'));
       } else {
         setShifts(empty);
         setUnavailable(new Set());
+        setReasons({});
         setLoadMessage(t('noPrev'));
       }
+      setMissingReasons({});
       setAuthenticated(true);
     } catch (err) {
       setLoadMessage(err instanceof Error ? err.message : t('loadFailed'));
       // Allow them to proceed with an empty form if the server is unreachable.
       setShifts(initialShifts(week.days));
       setUnavailable(new Set());
+      setReasons({});
+      setMissingReasons({});
       setAuthenticated(true);
     } finally {
       setLoading(false);
@@ -175,6 +244,31 @@ function AppInner() {
       setToast({ kind: 'error', text: t('missingIdentity') });
       return;
     }
+    // Validate: every cant slot on a non-unavailable day must have a reason.
+    const missing: Record<string, Set<ShiftSlot>> = {};
+    const filteredReasons: Record<string, Partial<Record<ShiftSlot, string>>> = {};
+    for (const d of week.days) {
+      if (unavailable.has(d)) continue;
+      const day = shifts[d];
+      if (!day) continue;
+      (['morning', 'afternoon', 'night'] as ShiftSlot[]).forEach((slot) => {
+        if (day[slot] !== 'cant') return;
+        const r = (reasons[d]?.[slot] ?? '').trim();
+        if (!r) {
+          if (!missing[d]) missing[d] = new Set();
+          missing[d].add(slot);
+        } else {
+          if (!filteredReasons[d]) filteredReasons[d] = {};
+          filteredReasons[d]![slot] = r;
+        }
+      });
+    }
+    if (Object.keys(missing).length > 0) {
+      setMissingReasons(missing);
+      setToast({ kind: 'error', text: t('reasonMissing') });
+      return;
+    }
+    setMissingReasons({});
     setSubmitting(true);
     setToast(null);
     try {
@@ -189,6 +283,7 @@ function AppInner() {
         weekStart: week.start,
         unavailableDays: Array.from(unavailable),
         shifts: finalShifts,
+        reasons: filteredReasons,
       };
       const res = await postSubmission(submission);
       if (res.ok) {
@@ -256,9 +351,12 @@ function AppInner() {
             week={week}
             shifts={shifts}
             unavailableDays={unavailable}
+            reasons={reasons}
+            missingReasons={missingReasons}
             readOnly={weekLocked}
             onCycleShift={handleCycleShift}
             onToggleUnavailable={handleToggleUnavailable}
+            onChangeReason={handleChangeReason}
           />
 
           <SubmitBar
