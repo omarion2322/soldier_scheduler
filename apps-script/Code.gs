@@ -582,17 +582,20 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
 
   // Build availability map: avail[day][slot][position] = [names...]
   const avail = {};
+  // Unavailability per slot: unavail[day][slot][position] = [{name, reason}, ...]
+  const unavail = {};
   days.forEach(function (d) {
     avail[d] = {};
+    unavail[d] = {};
     SLOTS.forEach(function (s) {
       avail[d][s] = {};
-      positions.forEach(function (p) { avail[d][s][p] = []; });
+      unavail[d][s] = {};
+      positions.forEach(function (p) {
+        avail[d][s][p] = [];
+        unavail[d][s][p] = [];
+      });
     });
   });
-
-  // Collect per-soldier unavailability reasons across the week.
-  // reasonsList: [{ name, position, date, slot, reason }, ...]
-  const reasonsList = [];
 
   const last = dataSheet.getLastRow();
   if (last >= 2) {
@@ -601,7 +604,8 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     const rows = dataSheet.getRange(2, 1, last - 1, totalCols).getValues();
     const display = dataSheet.getRange(2, 1, last - 1, totalCols).getDisplayValues();
     const FIXED = FIXED_HEADERS.length;
-    const REASONS_COL = FIXED + days.length * SLOTS.length + 1; // 0-based index of 'reasons'
+    const AT_HOME_COL = FIXED + days.length * SLOTS.length;     // 0-based
+    const REASONS_COL = AT_HOME_COL + 1;
 
     // Keep only the latest row per phone (by submittedAt).
     const latestByPhone = {};
@@ -630,7 +634,21 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
           }
         });
       });
-      // Parse reasons JSON if present and collect entries.
+
+      // At-home (full-day unavailable) days → add בבית as reason for all slots.
+      const atHomeStr = String(r[AT_HOME_COL] || '');
+      const atHomeDays = atHomeStr
+        ? atHomeStr.split(',').map(function (s) { return s.trim(); })
+            .filter(function (s) { return /^\d{4}-\d{2}-\d{2}$/.test(s); })
+        : [];
+      atHomeDays.forEach(function (d) {
+        if (!unavail[d]) return;
+        SLOTS.forEach(function (slot) {
+          unavail[d][slot][position].push({ name: name, reason: 'בבית' });
+        });
+      });
+
+      // Per-slot reasons from JSON column.
       const rawReasons = String(r[REASONS_COL] || '').trim();
       if (rawReasons) {
         let parsed = null;
@@ -641,9 +659,7 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
             if (!dayObj || typeof dayObj !== 'object') return;
             SLOTS.forEach(function (slot) {
               const txt = String(dayObj[slot] == null ? '' : dayObj[slot]).trim();
-              if (txt) reasonsList.push({
-                name: name, position: position, date: d, slot: slot, reason: txt,
-              });
+              if (txt) unavail[d][slot][position].push({ name: name, reason: txt });
             });
           });
         }
@@ -763,18 +779,23 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     SLOTS.forEach(function (slot, slotIdx) {
       const mefakedNames = avail[d][slot].mefaked_haml;
       const sambatzNames = avail[d][slot].sambatz;
+      const mefakedUnavail = unavail[d][slot].mefaked_haml;
+      const sambatzUnavail = unavail[d][slot].sambatz;
       const prev = (preserved[d] && preserved[d][slot]) || { mefaked: '', sambatz: '' };
-      const rowValues = [[
-        SHIFT_TIME_LABELS[slot],
-        mefakedNames.join('\n'),
-        sambatzNames.join('\n'),
-        '',
-        SHIFT_TIME_LABELS[slot],
-        prev.mefaked,
-        prev.sambatz,
-      ]];
+
+      // Plain text for non-availability cells; rich text for the two avail cells.
+      const mefakedCell = buildAvailRichText_(mefakedNames, mefakedUnavail);
+      const sambatzCell = buildAvailRichText_(sambatzNames, sambatzUnavail);
+
+      sheet.getRange(curRow, COL_TIME).setValue(SHIFT_TIME_LABELS[slot]);
+      sheet.getRange(curRow, COL_MEFAKED).setRichTextValue(mefakedCell);
+      sheet.getRange(curRow, COL_SAMBATZ).setRichTextValue(sambatzCell);
+      sheet.getRange(curRow, COL_SPACER).setValue('');
+      sheet.getRange(curRow, COL_TIME_R).setValue(SHIFT_TIME_LABELS[slot]);
+      sheet.getRange(curRow, COL_MEFAKED_R).setValue(prev.mefaked);
+      sheet.getRange(curRow, COL_SAMBATZ_R).setValue(prev.sambatz);
+
       const rowRange = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
-      rowRange.setValues(rowValues);
       rowRange.setVerticalAlignment('middle')
         .setHorizontalAlignment('center')
         .setWrap(true)
@@ -792,10 +813,17 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
         .setFontWeight('bold')
         .setFontSize(11);
 
+      // Count lines per cell so the row height fits all of them.
+      const mefakedLines = mefakedNames.length + (mefakedUnavail.length > 0
+        ? mefakedUnavail.length + (mefakedNames.length > 0 ? 1 : 0)
+        : 0);
+      const sambatzLines = sambatzNames.length + (sambatzUnavail.length > 0
+        ? sambatzUnavail.length + (sambatzNames.length > 0 ? 1 : 0)
+        : 0);
       const maxNames = Math.max(
         1,
-        mefakedNames.length,
-        sambatzNames.length,
+        mefakedLines,
+        sambatzLines,
         (prev.mefaked.match(/\n/g) || []).length + (prev.mefaked ? 1 : 0),
         (prev.sambatz.match(/\n/g) || []).length + (prev.sambatz ? 1 : 0),
       );
@@ -831,79 +859,54 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
     curRow += 1;
   });
 
-  // ===== Reasons section =====
-  if (reasonsList.length > 0) {
-    curRow += 1; // gap before reasons block
-
-    const reasonsTitle = sheet.getRange(curRow, 1, 1, TOTAL_COLS);
-    reasonsTitle.merge();
-    reasonsTitle.setValue('סיבות אי-זמינות')
-      .setBackground(COLOR_TITLE_BG)
-      .setFontColor(COLOR_TITLE_FG)
-      .setFontWeight('bold')
-      .setFontSize(14)
-      .setHorizontalAlignment('center')
-      .setVerticalAlignment('middle');
-    sheet.setRowHeight(curRow, 30);
-    curRow += 1;
-
-    // Column headers for the reasons table — spans cols 1..5 (Time..TimeR), leaves 6/7 free.
-    const reasonHeaders = [['שם', 'תפקיד', 'תאריך', 'משמרת', 'סיבה']];
-    const headerRange = sheet.getRange(curRow, 1, 1, 5);
-    headerRange.setValues(reasonHeaders)
-      .setBackground(COLOR_SUBHDR_AVAIL)
-      .setFontWeight('bold')
-      .setFontSize(11)
-      .setHorizontalAlignment('center')
-      .setVerticalAlignment('middle');
-    sheet.setRowHeight(curRow, 24);
-    curRow += 1;
-
-    // Stable order: by name, then chronological by (date, slot).
-    const slotOrder = { morning: 0, afternoon: 1, night: 2 };
-    reasonsList.sort(function (a, b) {
-      if (a.name !== b.name) return a.name < b.name ? -1 : 1;
-      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
-      return slotOrder[a.slot] - slotOrder[b.slot];
-    });
-
-    const slotLabelsHe = { morning: 'בוקר', afternoon: 'צהריים', night: 'לילה' };
-    reasonsList.forEach(function (entry, i) {
-      const rowValues = [[
-        entry.name,
-        POSITION_LABELS_HE[entry.position] || entry.position,
-        isoToDDMM_(entry.date) + ' (' + DAY_NAMES_HE[new Date(entry.date + 'T00:00:00Z').getUTCDay()] + ')',
-        slotLabelsHe[entry.slot] + ' (' + SHIFT_TIME_LABELS[entry.slot] + ')',
-        entry.reason,
-      ]];
-      const rowRange = sheet.getRange(curRow, 1, 1, 5);
-      rowRange.setValues(rowValues)
-        .setVerticalAlignment('middle')
-        .setHorizontalAlignment('center')
-        .setWrap(true)
-        .setFontSize(11)
-        .setBackground(i % 2 === 0 ? COLOR_BAND_A : COLOR_BAND_B);
-      // Left-align the (often long) reason cell for readability.
-      sheet.getRange(curRow, 5).setHorizontalAlignment('right');
-      const lines = (String(entry.reason).match(/\n/g) || []).length + 1;
-      sheet.setRowHeight(curRow, Math.max(28, 18 + lines * 16));
-      curRow += 1;
-    });
-
-    sheet.getRange(curRow - reasonsList.length - 1, 1, reasonsList.length + 1, 5)
-      .setBorder(true, true, true, true, true, true, COLOR_BORDER,
-        SpreadsheetApp.BorderStyle.SOLID);
-  }
-
   sheet.setColumnWidth(COL_TIME, 110);
-  sheet.setColumnWidth(COL_MEFAKED, 180);
-  sheet.setColumnWidth(COL_SAMBATZ, 240);
+  sheet.setColumnWidth(COL_MEFAKED, 220);
+  sheet.setColumnWidth(COL_SAMBATZ, 280);
   sheet.setColumnWidth(COL_SPACER, 20);
   sheet.setColumnWidth(COL_TIME_R, 110);
   sheet.setColumnWidth(COL_MEFAKED_R, 160);
   sheet.setColumnWidth(COL_SAMBATZ_R, 200);
   sheet.setFrozenRows(1);
   sheet.setHiddenGridlines(true);
+}
+
+/**
+ * Builds a RichTextValue for an availability cell:
+ *   • Available names (one per line, default styling)
+ *   • A grey separator line ("———") if both groups are non-empty
+ *   • Unavailable entries: "✕ name — reason", styled red + italic
+ */
+function buildAvailRichText_(availNames, unavailEntries) {
+  const lines = [];
+  availNames.forEach(function (n) { lines.push({ text: n, kind: 'avail' }); });
+  if (unavailEntries && unavailEntries.length > 0) {
+    if (availNames.length > 0) lines.push({ text: '———', kind: 'sep' });
+    unavailEntries.forEach(function (e) {
+      const reason = e.reason ? ' — ' + e.reason : '';
+      lines.push({ text: '✕ ' + e.name + reason, kind: 'unavail' });
+    });
+  }
+  if (lines.length === 0) {
+    return SpreadsheetApp.newRichTextValue().setText('').build();
+  }
+  const full = lines.map(function (l) { return l.text; }).join('\n');
+  const builder = SpreadsheetApp.newRichTextValue().setText(full);
+  const unavailStyle = SpreadsheetApp.newTextStyle()
+    .setForegroundColor('#c5221f')
+    .setItalic(true)
+    .build();
+  const sepStyle = SpreadsheetApp.newTextStyle()
+    .setForegroundColor('#9aa0a6')
+    .build();
+  let pos = 0;
+  lines.forEach(function (l) {
+    const start = pos;
+    const end = pos + l.text.length;
+    if (l.kind === 'unavail') builder.setTextStyle(start, end, unavailStyle);
+    else if (l.kind === 'sep') builder.setTextStyle(start, end, sepStyle);
+    pos = end + 1; // +1 for the joining newline
+  });
+  return builder.build();
 }
 
 // =====================================================================

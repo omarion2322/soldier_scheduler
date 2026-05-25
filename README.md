@@ -84,8 +84,9 @@ apps-script/
 - Every shift marked **"לא יכול"** must include a free-text reason in the inline box that opens
   inside that shift's card. The form refuses to submit (and highlights each missing slot) until
   every "can't" has a reason. Days marked **"בבית"** are exempt — the whole-day flag is its own
-  reason. Reasons round-trip with the rest of the submission and appear as a "סיבות אי-זמינות"
-  table at the bottom of the `Week N Shifts` tab.
+  reason. On the `Week N Shifts` tab, each שיבוץ slot's left (זמינות) cell shows the available
+  soldiers, then a red, italic list of who said no plus their reason (`✕ שם — סיבה`); soldiers
+  who are "בבית" appear with the reason "בבית" on every slot of that day.
 
 ## Auto-scheduler page (`/algo`)
 
