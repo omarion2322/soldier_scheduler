@@ -88,6 +88,32 @@ apps-script/
   soldiers, then a red, italic list of who said no plus their reason (`✕ שם — סיבה`); soldiers
   who are "בבית" appear with the reason "בבית" on every slot of that day.
 
+## Admin overrides on the spreadsheet
+
+After a week is locked you can hand-fix data directly on the raw `Week N (…)` tab — useful when
+a soldier forgot to submit or sent the wrong values.
+
+- **Flip availability:** edit a slot cell. Use `1` for can or `0` for can't.
+- **Add a missing soldier:** append a new row. Required cells: `phone` (10 digits), `name`,
+  `position` (`sambatz` or `mefaked_haml`), `weekStart` (the YYYY-MM-DD week start), then the
+  3 × N slot cells (`1`/`0`). You can leave `submittedAt` blank — the sync trigger fills it in.
+- **Do not edit** the `Week N Shifts` tab's left (זמינות) block — it's regenerated from the raw
+  tab on every sync. The right-side שיבוץ block is preserved.
+
+A one-time setup installs the sync trigger:
+
+1. Open the Apps Script editor for the project.
+2. In the function picker, pick **`setupOnEditTrigger`** and click **Run**. Authorize when prompted.
+
+From then on, any edit on a raw `Week N (…)` tab automatically:
+
+1. Bumps `submittedAt` for the touched row(s) to now (so admin edits always win the dedupe).
+2. De-duplicates by phone.
+3. Rebuilds the matching `Week N Shifts` tab (זמינות panel + ✕-reasons re-derived; שיבוץ
+   preserved).
+
+The `/algo` page and the soldier form will see the updated rows on the next load.
+
 ## Auto-scheduler page (`/algo`)
 
 Open at `https://<user>.github.io/soldier_scheduler/algo` (no auth required).

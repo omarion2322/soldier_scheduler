@@ -1091,3 +1091,123 @@ function handleAlgoSave_(body) {
     lock.releaseLock();
   }
 }
+
+// =====================================================================
+// Admin overrides — sync manual edits to raw "Week N (...)" tabs back
+// into the rendered "Week N Shifts (...)" tab and the rest of the
+// platform.
+//
+// Setup (run ONCE from the Apps Script editor):
+//   1. Open the script editor.
+//   2. Select the function `setupOnEditTrigger` and click Run. Authorize.
+//   3. The trigger is installable (not the simple onEdit), which lets it
+//      acquire a ScriptLock while rebuilding.
+//
+// Behavior:
+//   - Edits in row 1 (headers) are ignored.
+//   - For each edited data row, `submittedAt` (col 1) is bumped to now so
+//     the manual edit beats any earlier soldier submission in the dedupe.
+//   - The full raw tab is re-deduped by phone (keeping latest submittedAt)
+//     and the matching "Week N Shifts" tab is rebuilt. The right-side
+//     שיבוץ block is preserved (hard constraints survive).
+//   - Edits in "Week N Shifts" tabs are ignored — the right-side block is
+//     preserved automatically on the next rebuild; the left-side block is
+//     regenerated from the raw tab and shouldn't be hand-edited.
+// =====================================================================
+
+function setupOnEditTrigger() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const triggers = ScriptApp.getProjectTriggers();
+  for (let i = 0; i < triggers.length; i += 1) {
+    if (triggers[i].getHandlerFunction() === 'onEditAdminSync') {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  ScriptApp.newTrigger('onEditAdminSync')
+    .forSpreadsheet(ss)
+    .onEdit()
+    .create();
+  SpreadsheetApp.getActive().toast(
+    'Admin-edit sync trigger installed.',
+    'Soldier Scheduler',
+    5,
+  );
+}
+
+function weekStartForRawTab_(tabName) {
+  // Returns the weekStart whose raw data tab matches the given name, or '' if
+  // the name corresponds to a non-raw tab (e.g. the "Shifts" rendered tab).
+  if (!tabName || tabName.indexOf(' Shifts ') !== -1) return '';
+  const weeks = allWeekStarts_();
+  for (let i = 0; i < weeks.length; i += 1) {
+    if (tabNameFor_(weeks[i]) === tabName) return weeks[i];
+  }
+  return '';
+}
+
+function onEditAdminSync(e) {
+  try {
+    if (!e || !e.range) return;
+    const sheet = e.range.getSheet();
+    const tabName = sheet.getName();
+    const weekStart = weekStartForRawTab_(tabName);
+    if (!weekStart) return; // not a raw Week N tab
+
+    const startRow = e.range.getRow();
+    const numRows = e.range.getNumRows();
+    const endRow = startRow + numRows - 1;
+    if (endRow < 2) return; // header-only edit
+
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(8000)) return; // a soldier POST is in flight; skip
+    try {
+      // 1. Bump submittedAt to "now" for each touched data row that has any
+      //    content. This guarantees admin edits beat earlier soldier rows
+      //    during dedupe-by-phone.
+      const now = new Date().toISOString();
+      const totalCols = Math.max(1, sheet.getLastColumn());
+      const firstDataRow = Math.max(2, startRow);
+      const rowsToCheck = endRow - firstDataRow + 1;
+      if (rowsToCheck > 0) {
+        const range = sheet.getRange(firstDataRow, 1, rowsToCheck, totalCols);
+        const values = range.getValues();
+        const submitCol = sheet.getRange(firstDataRow, 1, rowsToCheck, 1);
+        const newSubmits = submitCol.getValues();
+        let changed = false;
+        for (let i = 0; i < values.length; i += 1) {
+          let hasAny = false;
+          for (let j = 1; j < values[i].length; j += 1) {
+            const v = values[i][j];
+            if (v !== '' && v != null) { hasAny = true; break; }
+          }
+          if (hasAny) {
+            newSubmits[i][0] = now;
+            changed = true;
+          }
+        }
+        if (changed) submitCol.setValues(newSubmits);
+      }
+
+      // 2. Dedupe and rebuild.
+      dedupeAllPhones_(sheet);
+      rebuildShiftsTab_(sheet, weekStart);
+
+      SpreadsheetApp.getActive().toast(
+        'Synced edits → ' + shiftsTabNameFor_(weekStart),
+        'Soldier Scheduler',
+        3,
+      );
+    } finally {
+      lock.releaseLock();
+    }
+  } catch (err) {
+    // Never throw from a trigger — it would leave the lock acquired.
+    try {
+      SpreadsheetApp.getActive().toast(
+        'Sync failed: ' + String(err),
+        'Soldier Scheduler',
+        5,
+      );
+    } catch (e2) { /* ignore */ }
+  }
+}
