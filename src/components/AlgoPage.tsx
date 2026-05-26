@@ -72,6 +72,41 @@ function AlgoPageInner() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  // Loads (or reloads) the data for the currently selected week. When
+  // `resetWorkInProgress` is true, the in-progress schedule + prev-day
+  // entries are cleared first (used on initial week change). Sync keeps
+  // the existing schedule visible until the new data arrives, then lets
+  // the server's saved assignments replace it if any exist.
+  const loadWeek = async (resetWorkInProgress: boolean): Promise<boolean> => {
+    setError(null);
+    if (resetWorkInProgress) {
+      setAssignments(emptyAssignmentsFor(week.days));
+      setWarnings([]);
+      setPrevDay(emptyPrevDay());
+      setInfo(null);
+    }
+    try {
+      const [subs, state] = await Promise.all([
+        fetchWeekSubmissions(week.start),
+        fetchAlgoState(week.start),
+      ]);
+      setSubmissions(subs);
+      if (state.prevDay) setPrevDay(toSchedPrev(state.prevDay));
+      else if (resetWorkInProgress) setPrevDay(emptyPrevDay());
+      if (state.current) {
+        setAssignments(toSchedAssignments(state.current, week.days));
+        if (resetWorkInProgress) setInfo('נטענה שיבוץ קיים מהגיליון.');
+      } else if (resetWorkInProgress) {
+        setAssignments(emptyAssignmentsFor(week.days));
+      }
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  };
 
   // Names directory for prev-day dropdowns: every submitter for the week.
   const allNames = useMemo(
@@ -143,6 +178,20 @@ function AlgoPageInner() {
       cancelled = true;
     };
   }, [week.start, week.days]);
+
+  const handleSync = async () => {
+    if (syncing || loading) return;
+    setSyncing(true);
+    const ok = await loadWeek(false);
+    setSyncing(false);
+    if (ok) {
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
+      const ss = String(now.getSeconds()).padStart(2, '0');
+      setInfo(`הנתונים סונכרנו מהגיליון (${hh}:${mm}:${ss}).`);
+    }
+  };
 
   const handleRun = () => {
     setRunning(true);
@@ -316,6 +365,15 @@ function AlgoPageInner() {
           className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-800 shadow-sm"
         >
           ניקוי
+        </button>
+        <button
+          type="button"
+          onClick={handleSync}
+          disabled={loading || syncing}
+          title="טען מחדש את האילוצים מהגיליון בלי לאבד את העבודה הנוכחית"
+          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-40"
+        >
+          {syncing ? 'מסנכרן…' : 'סנכרון מהגיליון'}
         </button>
         <div className="ml-auto self-center text-xs text-slate-600">
           {submissions.length} חיילים הגישו השבוע
