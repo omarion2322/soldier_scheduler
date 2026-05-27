@@ -248,9 +248,14 @@ function AlgoPageInner() {
     setPrevDay((prev) => {
       const next = { ...prev, [slot]: { ...prev[slot] } };
       const arr = [...next[slot][role]];
-      if (name) arr[i] = name;
-      else arr.splice(i, 1);
-      next[slot] = { ...next[slot], [role]: arr };
+      if (name) {
+        while (arr.length < i) arr.push('');
+        arr[i] = name;
+      } else if (i < arr.length) {
+        arr.splice(i, 1);
+      }
+      const compact = arr.filter((v) => typeof v === 'string' && v.length > 0);
+      next[slot] = { ...next[slot], [role]: compact };
       return next;
     });
   };
@@ -266,13 +271,18 @@ function AlgoPageInner() {
       const day = prev[date] ?? { morning: { mefaked_haml: [], sambatz: [] }, afternoon: { mefaked_haml: [], sambatz: [] }, night: { mefaked_haml: [], sambatz: [] } };
       const block = day[slot] ?? { mefaked_haml: [], sambatz: [] };
       const arr = [...block[role]];
-      if (name) arr[i] = name;
-      else arr.splice(i, 1);
+      if (name) {
+        while (arr.length < i) arr.push('');
+        arr[i] = name;
+      } else if (i < arr.length) {
+        arr.splice(i, 1);
+      }
+      const compact = arr.filter((v) => typeof v === 'string' && v.length > 0);
       return {
         ...prev,
         [date]: {
           ...day,
-          [slot]: { ...block, [role]: arr },
+          [slot]: { ...block, [role]: compact },
         },
       };
     });

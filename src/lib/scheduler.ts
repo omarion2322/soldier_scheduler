@@ -92,8 +92,8 @@ function cloneAssignmentsFor(days: string[], src?: WeekAssignments): WeekAssignm
       const block = day[slot];
       if (!block) continue;
       out[d]![slot] = {
-        mefaked_haml: [...(block.mefaked_haml ?? [])].filter((n) => n.trim().length > 0),
-        sambatz: [...(block.sambatz ?? [])].filter((n) => n.trim().length > 0),
+        mefaked_haml: [...(block.mefaked_haml ?? [])].filter((n): n is string => typeof n === 'string' && n.trim().length > 0),
+        sambatz: [...(block.sambatz ?? [])].filter((n): n is string => typeof n === 'string' && n.trim().length > 0),
       };
     }
   }
