@@ -62,6 +62,7 @@ export interface AlgoLoadResponse {
   weekStart: string;
   prevDay: PrevDayAssignmentsDTO | null;
   current: WeekAssignmentsDTO | null;
+  priorShifts?: Record<string, number>;
 }
 
 export interface AlgoSavePayload {

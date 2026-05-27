@@ -127,7 +127,9 @@ For the selected week the page:
 3. Runs a greedy constraint solver in the browser:
    - Per slot: 1 מפקד חמ״ל + 2 סמב״צ (1 + 1 at night).
    - At least 2 shifts of rest between any soldier's consecutive assignments.
-   - Even balance via min-count tie-break.
+   - Even balance via min-count tie-break — and cross-week balance via the
+     **Overall Shifts** ledger (see below). Soldiers with fewer historical
+     shifts are picked first.
    - **Hard constraints:** any name already in the table — whether typed in
      manually, loaded from the sheet, or produced by a previous run — is locked.
      The solver counts it toward composition demand, reserves its rest gap, and
@@ -139,7 +141,29 @@ For the selected week the page:
    in the dropdown means that person marked the slot as "can't" / "at home" —
    you can still hard-assign them.
 5. **Save to sheet** writes the result into the right-side `שיבוץ` block of the
-   matching `Week N Shifts` tab. **Clear** wipes the table back to empty.
+   matching `Week N Shifts` tab, **and** updates the `Overall Shifts` tab
+   (see below). **Clear** wipes the table back to empty.
+
+### Overall Shifts ledger
+
+Every time `Save to sheet` runs on `/algo`, the Apps Script backend updates a
+single tab named **`Overall Shifts`**:
+
+| phone | name | position | total | 2026-05-28 | 2026-06-04 | ... |
+| ----- | ---- | -------- | ----- | ---------- | ---------- | --- |
+
+One row per soldier (keyed by phone). The column for the just-saved week is
+**replaced** with the per-phone shift count for that schedule (so re-saving the
+same week is idempotent — no double-counting), and `total` is recomputed as
+the row sum. New soldiers are appended automatically.
+
+On the `/algo` GET load, the backend returns `priorShifts = total − this_week_column`
+for every phone, and the in-browser scheduler adds it to the in-week count
+when tie-breaking eligible candidates. The "איזון משמרות" table at the bottom
+of `/algo` shows three columns — שבועות קודמים / השבוע / סה״כ — so you can see
+the running balance at a glance.
+
+N/A placeholders never count toward any soldier in the ledger.
 
 The build also emits `dist/404.html` (a copy of `index.html`) so GitHub Pages serves the SPA
 on a direct refresh of `/algo`.

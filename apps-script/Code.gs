@@ -31,6 +31,8 @@
 
 const SHEET_ID = '1RQEXiMVyHqXV75j_gm0qT_1QobtC-TtNrwDxCYxyf2Q';
 const LOCKS_TAB = 'locks';
+const OVERALL_TAB = 'Overall Shifts';
+const OVERALL_FIXED_HEADERS = ['phone', 'name', 'position', 'total'];
 
 const SCHEDULE_START_ISO = '2026-05-28';
 const SCHEDULE_END_ISO = '2026-07-16';
@@ -296,6 +298,7 @@ function doGet(e) {
         weekStart: week,
         prevDay: readPrevDayForWeek_(week),
         current: readCurrentAssignmentsForWeek_(week),
+        priorShifts: readPriorShiftsExcluding_(week),
       });
     }
     const phone = (e && e.parameter && e.parameter.phone) || '';
@@ -1084,6 +1087,8 @@ function handleAlgoSave_(body) {
         if (desired > existingHeight) sheet.setRowHeight(row, desired);
       }
     }
+    // Update the cross-week ledger so balance applies next week.
+    try { updateOverallShifts_(weekStart, assignments); } catch (e) { /* non-fatal */ }
     return jsonResponse_({ ok: true });
   } catch (err) {
     return jsonResponse_({ ok: false, reason: 'server_error', error: String(err) });
@@ -1210,4 +1215,197 @@ function onEditAdminSync(e) {
       );
     } catch (e2) { /* ignore */ }
   }
+}
+
+// =====================================================================
+// Overall Shifts ledger
+//
+// A single tab named "Overall Shifts" with one row per soldier (keyed
+// by phone). Columns: phone | name | position | total | <weekStart ISO>...
+//
+// • `handleAlgoSave_` calls `updateOverallShifts_` after writing the
+//   shifts tab. The value in the column for that week is REPLACED with
+//   the per-phone count for the just-saved schedule (so re-saving the
+//   same week is idempotent), and `total` is recomputed as the row sum.
+// • `handleAlgoLoad_` includes `priorShifts`: for each phone, the sum
+//   of all other week columns (i.e., total minus this week's contrib).
+//   The scheduler biases selection toward soldiers with lower
+//   priorShifts so workload evens out across weeks.
+// • N/A placeholders are ignored — they never count toward any phone.
+// =====================================================================
+
+function getOrCreateOverallSheet_() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sh = ss.getSheetByName(OVERALL_TAB);
+  if (!sh) {
+    sh = ss.insertSheet(OVERALL_TAB);
+    sh.getRange(1, 1, 1, OVERALL_FIXED_HEADERS.length).setValues([OVERALL_FIXED_HEADERS]);
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, 1, OVERALL_FIXED_HEADERS.length).setFontWeight('bold');
+  }
+  return sh;
+}
+
+function readOverallHeaders_(sh) {
+  const lastCol = Math.max(sh.getLastColumn(), OVERALL_FIXED_HEADERS.length);
+  const row = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  // Ensure the fixed headers exist in the expected order; if the sheet
+  // was hand-edited and headers are missing, repair them.
+  for (let i = 0; i < OVERALL_FIXED_HEADERS.length; i += 1) {
+    if (row[i] !== OVERALL_FIXED_HEADERS[i]) {
+      sh.getRange(1, i + 1).setValue(OVERALL_FIXED_HEADERS[i]);
+      row[i] = OVERALL_FIXED_HEADERS[i];
+    }
+  }
+  return row;
+}
+
+function findOrAppendWeekColumn_(sh, headers, weekStart) {
+  for (let i = OVERALL_FIXED_HEADERS.length; i < headers.length; i += 1) {
+    if (String(headers[i]) === weekStart) return i + 1; // 1-based column
+  }
+  const col = headers.length + 1;
+  sh.getRange(1, col).setValue(weekStart).setFontWeight('bold');
+  headers.push(weekStart);
+  return col;
+}
+
+function readOverallRows_(sh) {
+  const lastRow = sh.getLastRow();
+  const lastCol = Math.max(sh.getLastColumn(), OVERALL_FIXED_HEADERS.length);
+  if (lastRow < 2) return { rows: [], byPhone: {} };
+  const values = sh.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const byPhone = {};
+  const rows = [];
+  for (let i = 0; i < values.length; i += 1) {
+    const phone = canonPhone_(values[i][0]);
+    if (!phone) continue;
+    const rec = { rowIndex: i + 2, values: values[i].slice() };
+    rec.values[0] = phone;
+    rows.push(rec);
+    byPhone[phone] = rec;
+  }
+  return { rows: rows, byPhone: byPhone };
+}
+
+function countAssignmentsPerPhone_(assignments, weekStart) {
+  // Resolves names in saved assignments back to phones via the week's
+  // submissions; falls back to the literal name string for admin-added
+  // entries that don't correspond to a submitter.
+  const counts = {};
+  const nameByPhone = {};
+  const positionByPhone = {};
+  const dataSheet = getWeekSheet_(weekStart);
+  if (dataSheet) {
+    const subs = readAllSubmissions_(weekStart);
+    subs.forEach(function (s) {
+      const p = canonPhone_(s.phone);
+      if (!p) return;
+      nameByPhone[s.name] = p;
+      positionByPhone[p] = s.position;
+      if (!(p in counts)) counts[p] = 0;
+    });
+  }
+  Object.keys(assignments || {}).forEach(function (d) {
+    SLOTS.forEach(function (slot) {
+      const block = (assignments[d] || {})[slot] || { mefaked_haml: [], sambatz: [] };
+      ['mefaked_haml', 'sambatz'].forEach(function (role) {
+        (block[role] || []).forEach(function (name) {
+          if (!name || isNaSentinel_(name)) return;
+          const key = String(name).trim();
+          if (!key) return;
+          const phone = nameByPhone[key] || key;
+          counts[phone] = (counts[phone] || 0) + 1;
+          if (!positionByPhone[phone]) positionByPhone[phone] = role;
+        });
+      });
+    });
+  });
+  // Build a phone->name map for display in the overall tab. For unknown
+  // phones (admin-added) we just keep the literal name string.
+  const displayName = {};
+  Object.keys(nameByPhone).forEach(function (n) { displayName[nameByPhone[n]] = n; });
+  Object.keys(counts).forEach(function (p) { if (!displayName[p]) displayName[p] = p; });
+  return { counts: counts, displayName: displayName, position: positionByPhone };
+}
+
+function isNaSentinel_(v) {
+  return String(v).trim() === '— N/A —';
+}
+
+function updateOverallShifts_(weekStart, assignments) {
+  const sh = getOrCreateOverallSheet_();
+  const headers = readOverallHeaders_(sh);
+  const weekCol = findOrAppendWeekColumn_(sh, headers, weekStart);
+  // Re-read headers in case the row was extended by the helper above.
+  const finalLastCol = Math.max(sh.getLastColumn(), headers.length);
+  const { rows, byPhone } = readOverallRows_(sh);
+  const breakdown = countAssignmentsPerPhone_(assignments, weekStart);
+  const counts = breakdown.counts;
+
+  // 1) Zero this week's column for any phone NOT in the new counts —
+  //    they may have been removed from the schedule on re-save.
+  rows.forEach(function (rec) {
+    const phone = rec.values[0];
+    const had = Number(rec.values[weekCol - 1] || 0);
+    const now = counts[phone] || 0;
+    if (had !== now) {
+      sh.getRange(rec.rowIndex, weekCol).setValue(now);
+      rec.values[weekCol - 1] = now;
+    }
+  });
+
+  // 2) Add rows for phones we haven't seen before.
+  Object.keys(counts).forEach(function (phone) {
+    if (byPhone[phone]) return;
+    const newRow = sh.getLastRow() + 1;
+    const blank = new Array(finalLastCol).fill('');
+    blank[0] = phone;
+    blank[1] = breakdown.displayName[phone] || '';
+    blank[2] = breakdown.position[phone] || '';
+    blank[3] = 0;
+    blank[weekCol - 1] = counts[phone];
+    sh.getRange(newRow, 1, 1, finalLastCol).setValues([blank]);
+    byPhone[phone] = { rowIndex: newRow, values: blank.slice() };
+  });
+
+  // 3) Recompute the `total` column for every row.
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return;
+  const lastCol = sh.getLastColumn();
+  const data = sh.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  const totals = data.map(function (r) {
+    let sum = 0;
+    for (let i = OVERALL_FIXED_HEADERS.length; i < lastCol; i += 1) {
+      const n = Number(r[i]);
+      if (!isNaN(n)) sum += n;
+    }
+    return [sum];
+  });
+  sh.getRange(2, 4, totals.length, 1).setValues(totals);
+}
+
+function readPriorShiftsExcluding_(weekStart) {
+  // Returns { phone: priorTotal } where priorTotal = total - this week's
+  // column (so a re-run of /algo doesn't double-count whatever is
+  // already saved for this week).
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName(OVERALL_TAB);
+  if (!sh || sh.getLastRow() < 2) return {};
+  const lastCol = Math.max(sh.getLastColumn(), OVERALL_FIXED_HEADERS.length);
+  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  let weekColIdx = -1;
+  for (let i = OVERALL_FIXED_HEADERS.length; i < headers.length; i += 1) {
+    if (String(headers[i]) === weekStart) { weekColIdx = i; break; }
+  }
+  const values = sh.getRange(2, 1, sh.getLastRow() - 1, lastCol).getValues();
+  const out = {};
+  values.forEach(function (r) {
+    const phone = canonPhone_(r[0]);
+    if (!phone) return;
+    const total = Number(r[3] || 0);
+    const here = weekColIdx >= 0 ? Number(r[weekColIdx] || 0) : 0;
+    out[phone] = Math.max(0, total - here);
+  });
+  return out;
 }

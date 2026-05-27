@@ -245,4 +245,22 @@ describe('generateSchedule', () => {
     // N/A did not inflate any phone's shift count.
     expect(res.countsByPhone[NA_SENTINEL]).toBeUndefined();
   });
+
+  it('biases selection by priorShifts to balance across weeks', () => {
+    // Two equally available sambatz; pick only one each shift by having
+    // a single sambatz slot via using a custom locked structure isn't
+    // straightforward — instead, give them both unlimited availability
+    // and rely on the gap to force only ~ceil(slots/2) picks each, then
+    // assert the lower-prior one was chosen first (more shifts).
+    const soldiers: SchedulerSoldier[] = [
+      makeSoldier('m1', 'Alice', 'mefaked_haml', DAYS),
+      makeSoldier('busy', 'Busy', 'sambatz', DAYS),
+      makeSoldier('fresh', 'Fresh', 'sambatz', DAYS),
+    ];
+    const priorShifts = { busy: 10, fresh: 0 };
+    const res = generateSchedule({ days: DAYS, soldiers, prevDay: null, priorShifts });
+    // The fresh soldier should end up with strictly more shifts than the
+    // busy one over the whole week.
+    expect(res.countsByPhone['fresh']!).toBeGreaterThan(res.countsByPhone['busy']!);
+  });
 });

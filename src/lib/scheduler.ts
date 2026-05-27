@@ -46,6 +46,12 @@ export interface SchedulerInput {
    * the remaining vacancies.
    */
   locked?: WeekAssignments;
+  /**
+   * Per-phone count of shifts the soldier has already done in prior weeks
+   * (from the "Overall Shifts" ledger). Added to the in-week count when
+   * tie-breaking eligible candidates so workload evens out across weeks.
+   */
+  priorShifts?: Record<string, number>;
 }
 
 export interface UnfilledSlot {
@@ -126,7 +132,7 @@ function buildPhoneByName(soldiers: SchedulerSoldier[]): Map<string, string> {
  *   c. Slot left under-filled.
  */
 export function generateSchedule(input: SchedulerInput): SchedulerResult {
-  const { days, soldiers, prevDay, locked } = input;
+  const { days, soldiers, prevDay, locked, priorShifts } = input;
   const assignments = cloneAssignmentsFor(days, locked);
   const counts: Record<string, number> = {};
   const takenIndices: Record<string, number[]> = {};
@@ -206,8 +212,10 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
       out.push(s);
     }
     out.sort((a, b) => {
-      const ca = counts[a.phone] ?? 0;
-      const cb = counts[b.phone] ?? 0;
+      const pa = priorShifts?.[a.phone] ?? 0;
+      const pb = priorShifts?.[b.phone] ?? 0;
+      const ca = (counts[a.phone] ?? 0) + pa;
+      const cb = (counts[b.phone] ?? 0) + pb;
       if (ca !== cb) return ca - cb;
       return a.phone < b.phone ? -1 : a.phone > b.phone ? 1 : 0;
     });

@@ -68,6 +68,7 @@ function AlgoPageInner() {
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [prevDay, setPrevDay] = useState<PrevDayAssignments>(() => emptyPrevDay());
   const [assignments, setAssignments] = useState<WeekAssignments>(() => emptyAssignmentsFor(week.days));
+  const [priorShifts, setPriorShifts] = useState<Record<string, number>>({});
   const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
@@ -95,6 +96,7 @@ function AlgoPageInner() {
         fetchAlgoState(week.start),
       ]);
       setSubmissions(subs);
+      setPriorShifts(state.priorShifts ?? {});
       if (state.prevDay) setPrevDay(toSchedPrev(state.prevDay));
       else if (resetWorkInProgress) setPrevDay(emptyPrevDay());
       if (state.current) {
@@ -204,6 +206,7 @@ function AlgoPageInner() {
         soldiers: submissionsToSoldiers(submissions),
         prevDay,
         locked: assignments,
+        priorShifts,
       });
       setAssignments(res.assignments);
       setWarnings(res.warnings);
@@ -237,6 +240,9 @@ function AlgoPageInner() {
       });
       if (result.ok) {
         setInfo('השיבוץ נשמר לגיליון Week N Shifts (טור שיבוץ).');
+        // Refresh priorShifts (and any other server state) without
+        // clobbering the in-progress hard-constraint edits.
+        await loadWeek(false);
       } else {
         const detail = result.error || result.reason;
         setError(detail ? `השמירה נכשלה: ${detail}` : 'השמירה נכשלה.');
@@ -473,22 +479,34 @@ function AlgoPageInner() {
             <tr className="bg-slate-100 text-slate-700">
               <th className="border border-slate-200 p-2 text-right">שם</th>
               <th className="border border-slate-200 p-2 text-right">תפקיד</th>
-              <th className="border border-slate-200 p-2 text-right">משמרות</th>
+              <th className="border border-slate-200 p-2 text-right">שבועות קודמים</th>
+              <th className="border border-slate-200 p-2 text-right">השבוע</th>
+              <th className="border border-slate-200 p-2 text-right">סה״כ</th>
             </tr>
           </thead>
           <tbody>
             {submissions
               .slice()
-              .sort((a, b) => (countsByPhone[b.phone] ?? 0) - (countsByPhone[a.phone] ?? 0))
-              .map((s) => (
-                <tr key={s.phone}>
-                  <td className="border border-slate-200 p-2">{s.name}</td>
-                  <td className="border border-slate-200 p-2">
-                    {s.position === 'mefaked_haml' ? 'מפקד חמ"ל' : 'סמב"צ'}
-                  </td>
-                  <td className="border border-slate-200 p-2">{countsByPhone[s.phone] ?? 0}</td>
-                </tr>
-              ))}
+              .sort((a, b) => {
+                const ta = (countsByPhone[b.phone] ?? 0) + (priorShifts[b.phone] ?? 0);
+                const tb = (countsByPhone[a.phone] ?? 0) + (priorShifts[a.phone] ?? 0);
+                return ta - tb;
+              })
+              .map((s) => {
+                const here = countsByPhone[s.phone] ?? 0;
+                const prior = priorShifts[s.phone] ?? 0;
+                return (
+                  <tr key={s.phone}>
+                    <td className="border border-slate-200 p-2">{s.name}</td>
+                    <td className="border border-slate-200 p-2">
+                      {s.position === 'mefaked_haml' ? 'מפקד חמ"ל' : 'סמב"צ'}
+                    </td>
+                    <td className="border border-slate-200 p-2 text-slate-500">{prior}</td>
+                    <td className="border border-slate-200 p-2">{here}</td>
+                    <td className="border border-slate-200 p-2 font-semibold">{prior + here}</td>
+                  </tr>
+                );
+              })}
           </tbody>
         </table>
       </section>
