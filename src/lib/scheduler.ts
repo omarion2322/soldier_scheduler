@@ -2,6 +2,19 @@ import type { DayShifts, Position, ShiftSlot } from './types';
 
 export const SHIFT_ORDER: readonly ShiftSlot[] = ['morning', 'afternoon', 'night'] as const;
 
+/**
+ * Placeholder value the operator can put into a slot to mark that the
+ * position is intentionally left unfilled. It counts toward the slot's
+ * composition demand (so the scheduler doesn't try to fill it and the
+ * slot doesn't show up as under-filled), but it doesn't burn any
+ * soldier's rest gap or shift count.
+ */
+export const NA_SENTINEL = '— N/A —';
+
+export function isNA(name: string): boolean {
+  return name.trim() === NA_SENTINEL;
+}
+
 export interface SchedulerSoldier {
   phone: string;
   name: string;
@@ -157,11 +170,14 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
   }
 
   // Seed locked assignments: counts + taken indices for every pre-placed name.
+  // N/A placeholders count toward composition demand but don't burn a soldier's
+  // gap or shift count.
   let lockedIndex = 0;
   for (const date of days) {
     for (const slot of SHIFT_ORDER) {
       const block = assignments[date]![slot];
       for (const name of [...block.mefaked_haml, ...block.sambatz]) {
+        if (isNA(name)) continue;
         const phone = phoneByName.get(name.trim()) ?? name.trim();
         addTakenIndex(phone, lockedIndex);
         counts[phone] = (counts[phone] ?? 0) + 1;
@@ -228,6 +244,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
       // Phones already locked here (so we never pick them again for the same slot).
       const taken = new Set<string>();
       for (const name of [...existing.mefaked_haml, ...existing.sambatz]) {
+        if (isNA(name)) continue;
         const phone = phoneByName.get(name.trim());
         if (phone) taken.add(phone);
       }

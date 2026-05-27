@@ -206,4 +206,43 @@ describe('generateSchedule', () => {
     expect(res.assignments[DAYS[0]!]!.morning.sambatz.sort()).toEqual(['Carol', 'Dan']);
     expect(res.assignments[DAYS[0]!]!.morning.mefaked_haml).toHaveLength(1);
   });
+
+  it('treats N/A markers as filled demand without burning gap or counts', async () => {
+    const { NA_SENTINEL } = await import('./scheduler');
+    const soldiers: SchedulerSoldier[] = [
+      makeSoldier('m1', 'Alice', 'mefaked_haml', DAYS),
+      makeSoldier('s1', 'Carol', 'sambatz', DAYS),
+      makeSoldier('s2', 'Dan', 'sambatz', DAYS),
+    ];
+    const locked = {
+      [DAYS[0]!]: {
+        morning: { mefaked_haml: [NA_SENTINEL], sambatz: [NA_SENTINEL, NA_SENTINEL] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+      [DAYS[1]!]: {
+        morning: { mefaked_haml: [], sambatz: [] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+      [DAYS[2]!]: {
+        morning: { mefaked_haml: [], sambatz: [] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+    };
+    const res = generateSchedule({ days: DAYS, soldiers, prevDay: null, locked });
+    // The N/A-filled morning slot is preserved verbatim and not under-filled.
+    expect(res.assignments[DAYS[0]!]!.morning).toEqual({
+      mefaked_haml: [NA_SENTINEL],
+      sambatz: [NA_SENTINEL, NA_SENTINEL],
+    });
+    expect(res.unfilled.find((u) => u.date === DAYS[0]! && u.slot === 'morning')).toBeUndefined();
+    // N/A did not burn the only mefaked's gap: Alice is still pickable for
+    // afternoon (2-shift gap from morning would have blocked her if N/A
+    // counted as a real assignment).
+    expect(res.assignments[DAYS[0]!]!.afternoon.mefaked_haml).toEqual(['Alice']);
+    // N/A did not inflate any phone's shift count.
+    expect(res.countsByPhone[NA_SENTINEL]).toBeUndefined();
+  });
 });

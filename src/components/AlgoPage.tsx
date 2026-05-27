@@ -5,6 +5,8 @@ import type { ShiftSlot, Submission, WeekAssignmentsDTO, PrevDayAssignmentsDTO }
 import { fetchAlgoState, fetchWeekSubmissions, saveAlgoResult } from '../lib/api';
 import {
   generateSchedule,
+  isNA,
+  NA_SENTINEL,
   SHIFT_ORDER,
   type PrevDayAssignments,
   type SchedulerSoldier,
@@ -137,7 +139,7 @@ function AlgoPageInner() {
       for (const slot of SHIFT_ORDER) {
         const block = assignments[date]![slot];
         for (const n of [...block.mefaked_haml, ...block.sambatz]) {
-          if (!n) continue;
+          if (!n || isNA(n)) continue;
           const phone = byName[n] ?? n;
           out[phone] = (out[phone] ?? 0) + 1;
         }
@@ -495,17 +497,29 @@ function SlotCellEditor(props: {
     <div className="flex flex-col gap-1">
       {rows.map((n, i) => {
         const isLocked = (props.names[i] ?? '').length > 0;
+        const isNaCell = isNA(n);
         return (
           <select
             key={i}
             value={n}
             onChange={(e) => props.onChange(i, e.target.value)}
             className={`w-full rounded border p-1 text-sm ${
-              isLocked ? 'border-amber-400 bg-amber-50 font-medium' : 'border-slate-300 bg-white'
+              isNaCell
+                ? 'border-slate-400 bg-slate-100 italic text-slate-600'
+                : isLocked
+                  ? 'border-amber-400 bg-amber-50 font-medium'
+                  : 'border-slate-300 bg-white'
             }`}
-            title={isLocked ? 'אילוץ קשה — לא יוזז על ידי האלגוריתם' : undefined}
+            title={
+              isNaCell
+                ? 'משבצת מסומנת N/A — לא תיוצר על ידי האלגוריתם'
+                : isLocked
+                  ? 'אילוץ קשה — לא יוזז על ידי האלגוריתם'
+                  : undefined
+            }
           >
             <option value="">— ריק —</option>
+            <option value={NA_SENTINEL}>{NA_SENTINEL}</option>
             {props.options.map((opt) => {
               const sub = props.submissionsByName.get(opt);
               const slotState = sub?.shifts?.[props.date]?.[props.slot];
