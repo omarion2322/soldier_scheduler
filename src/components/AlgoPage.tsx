@@ -231,12 +231,16 @@ function AlgoPageInner() {
     setSaving(true);
     setError(null);
     try {
-      const ok = await saveAlgoResult({
+      const result = await saveAlgoResult({
         weekStart: week.start,
         assignments: toDtoAssignments(assignments, week.days),
       });
-      if (ok) setInfo('השיבוץ נשמר לגיליון Week N Shifts (טור שיבוץ).');
-      else setError('השמירה נכשלה.');
+      if (result.ok) {
+        setInfo('השיבוץ נשמר לגיליון Week N Shifts (טור שיבוץ).');
+      } else {
+        const detail = result.error || result.reason;
+        setError(detail ? `השמירה נכשלה: ${detail}` : 'השמירה נכשלה.');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

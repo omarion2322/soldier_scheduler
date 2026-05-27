@@ -86,14 +86,14 @@ export async function fetchAlgoState(weekStart: string): Promise<AlgoLoadRespons
  */
 export async function saveAlgoResult(
   payload: Omit<AlgoSavePayload, 'mode'>,
-): Promise<boolean> {
+): Promise<{ ok: boolean; reason?: string; error?: string }> {
   if (!API_URL) throw new Error('VITE_API_URL is not configured');
   const res = await fetch(API_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
     body: JSON.stringify({ mode: 'algo', ...payload } satisfies AlgoSavePayload),
   });
-  if (!res.ok) return false;
-  const data = (await res.json()) as { ok: boolean };
-  return Boolean(data.ok);
+  if (!res.ok) return { ok: false, reason: `http_${res.status}` };
+  const data = (await res.json()) as { ok: boolean; reason?: string; error?: string };
+  return { ok: Boolean(data.ok), reason: data.reason, error: data.error };
 }
