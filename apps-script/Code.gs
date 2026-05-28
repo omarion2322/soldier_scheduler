@@ -36,6 +36,10 @@ const OVERALL_FIXED_HEADERS = ['phone', 'name', 'position', 'total'];
 
 const SCHEDULE_START_ISO = '2026-05-28';
 const SCHEDULE_END_ISO = '2026-07-16';
+// First day of the Sunday-Saturday cadence. Weeks before this date follow
+// the original Thursday-start cadence; from this date onward every week
+// runs Sunday → Saturday. The bridge week can therefore span >7 days.
+const WEEK_REALIGN_ISO = '2026-06-14';
 
 const FIXED_HEADERS = ['submittedAt', 'phone', 'name', 'position', 'weekStart'];
 const SLOTS = ['morning', 'afternoon', 'night'];
@@ -74,27 +78,51 @@ function formatMonthDay_(iso) {
   return MONTHS[m] + ' ' + d;
 }
 
-function weekIndexFor_(weekStart) {
-  // Returns 1-based index, or 0 if invalid.
-  if (weekStart < SCHEDULE_START_ISO || weekStart > SCHEDULE_END_ISO) return 0;
-  // Reject would-be starts whose normal 7-day window overruns the schedule end
-  // (these are absorbed into the previous week and are not real starts).
-  if (addDaysIso_(weekStart, 6) > SCHEDULE_END_ISO) return 0;
-  const a = new Date(SCHEDULE_START_ISO + 'T00:00:00Z').getTime();
-  const b = new Date(weekStart + 'T00:00:00Z').getTime();
-  const diffDays = Math.round((b - a) / 86400000);
-  if (diffDays < 0 || diffDays % 7 !== 0) return 0;
-  return Math.floor(diffDays / 7) + 1;
-}
-
 function weekEndFor_(weekStart) {
   let end = addDaysIso_(weekStart, 6);
+  // Bridge: if the would-be NEXT Thursday-week would straddle the
+  // Sun-Sat realign date (next start still pre-realign but its end
+  // crosses), extend THIS week up to REALIGN - 1.
+  if (weekStart < WEEK_REALIGN_ISO) {
+    const nextStart = addDaysIso_(weekStart, 7);
+    const nextEnd = addDaysIso_(nextStart, 6);
+    if (nextStart < WEEK_REALIGN_ISO && nextEnd >= WEEK_REALIGN_ISO) {
+      end = addDaysIso_(WEEK_REALIGN_ISO, -1);
+    }
+  }
   if (end > SCHEDULE_END_ISO) end = SCHEDULE_END_ISO;
-  // Absorb a trailing short remainder into this week.
-  if (end < SCHEDULE_END_ISO && addDaysIso_(end, 7) > SCHEDULE_END_ISO) {
+  // Absorb only a very short (≤ 2 day) trailing remainder. Anything longer
+  // is emitted as its own week so the Sun-Sat cadence is preserved at the
+  // tail of the schedule.
+  const endMs = new Date(end + 'T00:00:00Z').getTime();
+  const finalMs = new Date(SCHEDULE_END_ISO + 'T00:00:00Z').getTime();
+  const trailing = Math.round((finalMs - endMs) / 86400000);
+  if (trailing > 0 && trailing <= 2) {
     end = SCHEDULE_END_ISO;
   }
   return end;
+}
+
+function allWeekStarts_() {
+  const out = [];
+  let d = SCHEDULE_START_ISO;
+  while (d <= SCHEDULE_END_ISO) {
+    out.push(d);
+    const end = weekEndFor_(d);
+    if (end >= SCHEDULE_END_ISO) break;
+    d = addDaysIso_(end, 1);
+  }
+  return out;
+}
+
+function weekIndexFor_(weekStart) {
+  // Returns 1-based index, or 0 if invalid.
+  if (weekStart < SCHEDULE_START_ISO || weekStart > SCHEDULE_END_ISO) return 0;
+  const starts = allWeekStarts_();
+  for (let i = 0; i < starts.length; i += 1) {
+    if (starts[i] === weekStart) return i + 1;
+  }
+  return 0;
 }
 
 function tabNameFor_(weekStart) {
@@ -179,17 +207,6 @@ function jsonResponse_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(
     ContentService.MimeType.JSON,
   );
-}
-
-function allWeekStarts_() {
-  const out = [];
-  let d = SCHEDULE_START_ISO;
-  while (d <= SCHEDULE_END_ISO) {
-    out.push(d);
-    if (weekEndFor_(d) >= SCHEDULE_END_ISO) break;
-    d = addDaysIso_(d, 7);
-  }
-  return out;
 }
 
 function getLocksSheet_() {
@@ -1012,10 +1029,10 @@ function readCurrentAssignmentsForWeek_(weekStart) {
 }
 
 function prevWeekStart_(weekStart) {
-  const candidate = addDaysIso_(weekStart, -7);
-  if (candidate < SCHEDULE_START_ISO) return '';
-  if (!weekIndexFor_(candidate)) return '';
-  return candidate;
+  const starts = allWeekStarts_();
+  const idx = starts.indexOf(weekStart);
+  if (idx <= 0) return '';
+  return starts[idx - 1];
 }
 
 function readPrevDayForWeek_(weekStart) {

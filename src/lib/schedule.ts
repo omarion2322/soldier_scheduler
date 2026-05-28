@@ -2,6 +2,11 @@ import type { DayShifts, ShiftSlot, ShiftState, Week } from './types';
 
 const SCHEDULE_START_ISO = '2026-05-28';
 const SCHEDULE_END_ISO = '2026-07-16';
+// First day of the Sunday-Saturday cadence. Weeks before this date follow the
+// original Thursday-start cadence; from this date onward every week runs
+// Sunday → Saturday. The bridge week (start < REALIGN, end = REALIGN - 1)
+// can therefore span more than 7 days.
+const WEEK_REALIGN_ISO = '2026-06-14';
 
 export const SCHEDULE_TIMEZONE = 'Asia/Jerusalem';
 
@@ -35,10 +40,26 @@ export function generateWeeks(): Week[] {
   let index = 0;
   while (cursor <= SCHEDULE_END_ISO) {
     let end = addDays(cursor, 6);
+    // Bridge logic: if this is the last pre-realign week (i.e., its
+    // normal next Thursday would still be < REALIGN but cross into the
+    // Sun-Sat domain), extend it to end on REALIGN - 1 instead. This
+    // makes the bridge week longer than 7 days; the next cursor jumps
+    // directly to REALIGN.
+    if (cursor < WEEK_REALIGN_ISO) {
+      const nextStart = addDays(cursor, 7);
+      const nextEnd = addDays(nextStart, 6);
+      if (nextStart < WEEK_REALIGN_ISO && nextEnd >= WEEK_REALIGN_ISO) {
+        end = addDays(WEEK_REALIGN_ISO, -1);
+      }
+    }
     if (end > SCHEDULE_END_ISO) end = SCHEDULE_END_ISO;
-    // Absorb a trailing short remainder into this week instead of emitting a
-    // stub week with < 7 days.
-    if (end < SCHEDULE_END_ISO && addDays(end, 7) > SCHEDULE_END_ISO) {
+    // Absorb only a very short (≤ 2 day) trailing remainder. Anything
+    // longer is emitted as its own week so the Sun-Sat cadence is
+    // preserved at the end of the schedule.
+    const trailingDays = Math.round(
+      (parseISODate(SCHEDULE_END_ISO).getTime() - parseISODate(end).getTime()) / 86_400_000,
+    );
+    if (trailingDays > 0 && trailingDays <= 2) {
       end = SCHEDULE_END_ISO;
     }
     const days: string[] = [];
@@ -49,7 +70,7 @@ export function generateWeeks(): Week[] {
     }
     weeks.push({ index, start: cursor, end, days });
     if (end >= SCHEDULE_END_ISO) break;
-    cursor = addDays(cursor, 7);
+    cursor = addDays(end, 1);
     index += 1;
   }
   return weeks;
