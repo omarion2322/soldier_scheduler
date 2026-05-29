@@ -159,6 +159,7 @@ function AlgoPageInner() {
     setAssignments(emptyAssignmentsFor(week.days));
     setWarnings([]);
     setPrevDay(emptyPrevDay());
+    setPriorShifts({});
     void (async () => {
       try {
         const [subs, state] = await Promise.all([
@@ -167,6 +168,7 @@ function AlgoPageInner() {
         ]);
         if (cancelled) return;
         setSubmissions(subs);
+        setPriorShifts(state.priorShifts ?? {});
         if (state.prevDay) setPrevDay(toSchedPrev(state.prevDay));
         if (state.current) {
           setAssignments(toSchedAssignments(state.current, week.days));
