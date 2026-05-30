@@ -348,9 +348,11 @@ function AppInner() {
             <h2 className="mb-2 text-center text-lg font-bold text-blue-900">
               {t('instructionsTitle')}
             </h2>
-            <p className="text-center text-base leading-relaxed text-slate-800">
-              {t('intro')}
-            </p>
+            <ol className="mx-auto max-w-prose list-decimal space-y-1 ps-6 text-start text-base leading-relaxed text-slate-800">
+              <li>{t('intro1')}</li>
+              <li>{t('intro2')}</li>
+              <li>{t('intro3')}</li>
+            </ol>
           </section>
 
           <WeekNav weeks={weeks} index={index} onChange={setIndex} />

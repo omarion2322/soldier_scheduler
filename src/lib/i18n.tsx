@@ -8,8 +8,11 @@ type Dict = Record<string, string>;
 
 const EN: Dict = {
   appTitle: 'Soldier Scheduler',
-  intro:
-    'Mark each shift as Can or Can’t. Tap "At Home" to mark a full day as Can’t.',
+  intro1:
+    'If you have constraints approved by your commanders, mark "Can’t" and provide the reason.',
+  intro2:
+    'For a day you’re returning from home, mark the morning as "Can’t" and the rest of the shifts as "Can". If you live close and it works for you to come up in the morning, feel free to leave it open.',
+  intro3: 'Leave everything else as "Can".',
   yourDetails: 'Your details',
   name: 'Name',
   namePlaceholder: 'Full name',
@@ -54,8 +57,10 @@ const EN: Dict = {
 
 const HE: Dict = {
   appTitle: 'מערכת שיבוץ חיילים',
-  intro:
-    'סמנו כל משמרת כ״יכול״ או ״לא יכול״ אם יש אילוץ שמונע. סמנו ״בבית״ כדי לסמן יום שלם כלא יכול. מי שישן בבסיס, לסמן משמרת בוקר ביום שהוא חוזר ומשמרת לילה יום לפני שהוא יוצא ב״לא יכול״.',
+  intro1: 'אם יש אילוצים שאושרו מול המפקדים שלכם יש לסמן ״לא יכול״ ולציין את האילוץ.',
+  intro2:
+    'עבור יום שחוזרים בו מהבית, יש לסמן את הבוקר ב״לא יכול״. אם אתם גרים קרוב וזה מסתדר לכם לעלות בוקר, תרגישו חופשיים להשאיר פתוח.',
+  intro3: 'כל השאר להשאיר ב״יכול״.',
   yourDetails: 'הפרטים שלך',
   name: 'שם',
   namePlaceholder: 'שם מלא',
