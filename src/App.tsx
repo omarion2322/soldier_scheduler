@@ -54,6 +54,8 @@ function AppInner() {
   const [toast, setToast] = useState<Toast>(null);
   const [loadMessage, setLoadMessage] = useState<string | null>(null);
   const [lockedWeeks, setLockedWeeks] = useState<Set<string>>(() => new Set());
+  const [locksLoaded, setLocksLoaded] = useState(false);
+  const autoSelectedRef = useRef(false);
   const loadedKeyRef = useRef<string | null>(null);
 
   const normalizedPhone = normalizePhone(phone);
@@ -64,12 +66,24 @@ function AppInner() {
     let cancelled = false;
     void (async () => {
       const list = await fetchLockedWeeks();
-      if (!cancelled) setLockedWeeks(new Set(list));
+      if (!cancelled) {
+        setLockedWeeks(new Set(list));
+        setLocksLoaded(true);
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, [authenticated]);
+
+  // On first lock-list load, jump to the first unlocked week (so freshly
+  // unlocked weeks are surfaced instead of a stale "current" locked week).
+  useEffect(() => {
+    if (!locksLoaded || autoSelectedRef.current) return;
+    autoSelectedRef.current = true;
+    const firstUnlocked = weeks.findIndex((w) => !lockedWeeks.has(w.start));
+    if (firstUnlocked >= 0 && firstUnlocked !== index) setIndex(firstUnlocked);
+  }, [locksLoaded, lockedWeeks, weeks, index]);
 
   // When user navigates between weeks after authenticating, refresh from server.
   useEffect(() => {
