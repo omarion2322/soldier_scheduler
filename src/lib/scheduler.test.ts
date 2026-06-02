@@ -263,4 +263,47 @@ describe('generateSchedule', () => {
     // busy one over the whole week.
     expect(res.countsByPhone['fresh']!).toBeGreaterThan(res.countsByPhone['busy']!);
   });
+
+  it('uses a mefaked as sambatz when allowed and sambatz are short', () => {
+    // Only one sambatz available, but morning needs two. With the flag on,
+    // a mefaked should fill the second sambatz slot.
+    const soldiers: SchedulerSoldier[] = [
+      makeSoldier('m1', 'Alice', 'mefaked_haml', DAYS),
+      makeSoldier('m2', 'Bob', 'mefaked_haml', DAYS),
+      makeSoldier('s1', 'Carol', 'sambatz', DAYS),
+    ];
+    const res = generateSchedule({
+      days: DAYS,
+      soldiers,
+      prevDay: null,
+      allowMefakedAsSambatz: true,
+    });
+    const morning = res.assignments[DAYS[0]!]!.morning;
+    expect(morning.sambatz).toHaveLength(2);
+    // Carol is the only real sambatz, so the second name must be a mefaked.
+    expect(morning.sambatz).toContain('Carol');
+    const second = morning.sambatz.find((n) => n !== 'Carol');
+    expect(['Alice', 'Bob']).toContain(second);
+  });
+
+  it('leaves sambatz slot under-filled when mefaked swap is disabled', () => {
+    const soldiers: SchedulerSoldier[] = [
+      makeSoldier('m1', 'Alice', 'mefaked_haml', DAYS),
+      makeSoldier('m2', 'Bob', 'mefaked_haml', DAYS),
+      makeSoldier('s1', 'Carol', 'sambatz', DAYS),
+    ];
+    const res = generateSchedule({
+      days: DAYS,
+      soldiers,
+      prevDay: null,
+      allowMefakedAsSambatz: false,
+    });
+    const morning = res.assignments[DAYS[0]!]!.morning;
+    // Only Carol fills sambatz; no mefaked borrowed.
+    expect(morning.sambatz).toEqual(['Carol']);
+    expect(morning.mefaked_haml).toHaveLength(1);
+    expect(['Alice', 'Bob']).toContain(morning.mefaked_haml[0]);
+    // Confirm at least one under-filled warning was raised.
+    expect(res.unfilled.some((u) => u.position === 'sambatz')).toBe(true);
+  });
 });

@@ -76,6 +76,7 @@ function AlgoPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [allowMefakedAsSambatz, setAllowMefakedAsSambatz] = useState(true);
 
   // Loads (or reloads) the data for the currently selected week. When
   // `resetWorkInProgress` is true, the in-progress schedule + prev-day
@@ -209,6 +210,7 @@ function AlgoPageInner() {
         prevDay,
         locked: assignments,
         priorShifts,
+        allowMefakedAsSambatz,
       });
       setAssignments(res.assignments);
       setWarnings(res.warnings);
@@ -399,6 +401,18 @@ function AlgoPageInner() {
         >
           {syncing ? 'מסנכרן…' : 'סנכרון מהגיליון'}
         </button>
+        <label
+          className="flex cursor-pointer select-none items-center gap-2 self-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
+          title="כשמסומן, אם חסרים סמב״צים ניתן להשתמש במפקדי חמ״ל כסמב״צ (תוך שמירה על מנוחה של 16 שעות לפחות בין משמרות)."
+        >
+          <input
+            type="checkbox"
+            checked={allowMefakedAsSambatz}
+            onChange={(e) => setAllowMefakedAsSambatz(e.target.checked)}
+            className="h-4 w-4 accent-slate-900"
+          />
+          להשתמש במפקדים כסמב״צים
+        </label>
         <div className="ml-auto self-center text-xs text-slate-600">
           {submissions.length} חיילים הגישו השבוע
         </div>

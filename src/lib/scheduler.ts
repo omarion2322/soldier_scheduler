@@ -52,6 +52,14 @@ export interface SchedulerInput {
    * tie-breaking eligible candidates so workload evens out across weeks.
    */
   priorShifts?: Record<string, number>;
+  /**
+   * If true (default), allow מפקד חמ"ל soldiers to fill סמב"צ vacancies
+   * when no סמב"צים are available. The standard rest gap (≥16h, i.e.
+   * RELAXED_GAP=2 shifts) is still enforced via pick()'s fallback chain.
+   * If false, סמב"צ vacancies are left unfilled instead of borrowing a
+   * מפקד.
+   */
+  allowMefakedAsSambatz?: boolean;
 }
 
 export interface UnfilledSlot {
@@ -132,7 +140,8 @@ function buildPhoneByName(soldiers: SchedulerSoldier[]): Map<string, string> {
  *   c. Slot left under-filled.
  */
 export function generateSchedule(input: SchedulerInput): SchedulerResult {
-  const { days, soldiers, prevDay, locked, priorShifts } = input;
+  const { days, soldiers, prevDay, locked, priorShifts, allowMefakedAsSambatz } = input;
+  const allowMefakedSwap = allowMefakedAsSambatz !== false;
   const assignments = cloneAssignmentsFor(days, locked);
   const counts: Record<string, number> = {};
   const takenIndices: Record<string, number[]> = {};
@@ -298,9 +307,9 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
         }
       }
 
-      // 4. Composition swap the other way.
+      // 4. Composition swap the other way (gated by allowMefakedAsSambatz).
       const swappedToSambatz: string[] = [];
-      if (sambatzFilled < demand.sambatz) {
+      if (allowMefakedSwap && sambatzFilled < demand.sambatz) {
         const extra = pick(
           date,
           slot,
