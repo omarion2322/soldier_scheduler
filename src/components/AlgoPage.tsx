@@ -246,6 +246,23 @@ function AlgoPageInner() {
     setInfo(`השיבוץ של ${date} נוקה.`);
   };
 
+  const handleClearDayPosition = (date: string, position: 'mefaked_haml' | 'sambatz') => {
+    setAssignments((prev) => {
+      const day = prev[date];
+      if (!day) return prev;
+      return {
+        ...prev,
+        [date]: {
+          morning: { ...day.morning, [position]: [] },
+          afternoon: { ...day.afternoon, [position]: [] },
+          night: { ...day.night, [position]: [] },
+        },
+      };
+    });
+    const label = position === 'mefaked_haml' ? 'מפקדי חמ"ל' : 'סמב"צים';
+    setInfo(`${label} של ${date} נוקו.`);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
@@ -450,14 +467,32 @@ function AlgoPageInner() {
           <div key={d} className="mb-3">
             <div className="mb-1 flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">{formatDayShort(d)}</h3>
-              <button
-                type="button"
-                onClick={() => handleClearDay(d)}
-                className="rounded-md bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-300"
-                title={`נקה את כל המשמרות של ${d}`}
-              >
-                נקה יום
-              </button>
+              <div className="flex flex-wrap items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleClearDayPosition(d, 'mefaked_haml')}
+                  className="rounded-md bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-300"
+                  title={`נקה רק את משבצות מפקדי חמ"ל של ${d}`}
+                >
+                  נקה מפקדים
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleClearDayPosition(d, 'sambatz')}
+                  className="rounded-md bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-300"
+                  title={`נקה רק את משבצות הסמב"צים של ${d}`}
+                >
+                  נקה סמב&quot;צים
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleClearDay(d)}
+                  className="rounded-md bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-300"
+                  title={`נקה את כל המשמרות של ${d}`}
+                >
+                  נקה יום
+                </button>
+              </div>
             </div>
             <table className="w-full table-fixed border-collapse text-sm">
               <thead>
