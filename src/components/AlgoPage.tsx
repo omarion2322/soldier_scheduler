@@ -234,6 +234,18 @@ function AlgoPageInner() {
     setInfo(null);
   };
 
+  const handleClearDay = (date: string) => {
+    setAssignments((prev) => ({
+      ...prev,
+      [date]: {
+        morning: { mefaked_haml: [], sambatz: [] },
+        afternoon: { mefaked_haml: [], sambatz: [] },
+        night: { mefaked_haml: [], sambatz: [] },
+      },
+    }));
+    setInfo(`השיבוץ של ${date} נוקה.`);
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
@@ -436,7 +448,17 @@ function AlgoPageInner() {
         </p>
         {week.days.map((d) => (
           <div key={d} className="mb-3">
-            <h3 className="mb-1 text-sm font-semibold">{formatDayShort(d)}</h3>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">{formatDayShort(d)}</h3>
+              <button
+                type="button"
+                onClick={() => handleClearDay(d)}
+                className="rounded-md bg-slate-200 px-2 py-1 text-xs font-semibold text-slate-800 shadow-sm hover:bg-slate-300"
+                title={`נקה את כל המשמרות של ${d}`}
+              >
+                נקה יום
+              </button>
+            </div>
             <table className="w-full table-fixed border-collapse text-sm">
               <thead>
                 <tr className="bg-slate-100 text-slate-700">
