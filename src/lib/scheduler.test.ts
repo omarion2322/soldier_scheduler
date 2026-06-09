@@ -306,4 +306,56 @@ describe('generateSchedule', () => {
     // Confirm at least one under-filled warning was raised.
     expect(res.unfilled.some((u) => u.position === 'sambatz')).toBe(true);
   });
+
+  it('allows configured sambatz phones to fill night mefaked gaps and enforces required partner', () => {
+    const oneDay = ['2026-05-28'];
+    const soldiers: SchedulerSoldier[] = [
+      makeSoldier('m1', 'M1', 'mefaked_haml', oneDay, {
+        '2026-05-28': { morning: 'can', afternoon: 'can', night: 'cant' },
+      }),
+      makeSoldier('503055054', 'Lead503', 'sambatz', oneDay),
+      makeSoldier('527033764', 'Partner527', 'sambatz', oneDay),
+      makeSoldier('s9', 'OtherS', 'sambatz', oneDay),
+    ];
+    const res = generateSchedule({
+      days: oneDay,
+      soldiers,
+      prevDay: null,
+      emergencyNightLead: {
+        enabled: true,
+        allowedSambatzPhones: ['503055054', '527033764'],
+        requiredPartnerByLeadPhone: { '503055054': '527033764' },
+      },
+    });
+    const night = res.assignments[oneDay[0]!]!.night;
+    expect(['Lead503', 'Partner527']).toContain(night.mefaked_haml[0]);
+    if (night.mefaked_haml.includes('Lead503')) {
+      expect(night.sambatz).toContain('Partner527');
+    }
+  });
+
+  it('does not use 503055054 as night mefaked when required partner is unavailable', () => {
+    const oneDay = ['2026-05-28'];
+    const soldiers: SchedulerSoldier[] = [
+      makeSoldier('m1', 'M1', 'mefaked_haml', oneDay, {
+        '2026-05-28': { morning: 'can', afternoon: 'can', night: 'cant' },
+      }),
+      makeSoldier('503055054', 'Lead503', 'sambatz', oneDay),
+      makeSoldier('527033764', 'Partner527', 'sambatz', oneDay, {
+        '2026-05-28': { morning: 'can', afternoon: 'can', night: 'cant' },
+      }),
+    ];
+    const res = generateSchedule({
+      days: oneDay,
+      soldiers,
+      prevDay: null,
+      emergencyNightLead: {
+        enabled: true,
+        allowedSambatzPhones: ['503055054', '527033764'],
+        requiredPartnerByLeadPhone: { '503055054': '527033764' },
+      },
+    });
+    const night = res.assignments[oneDay[0]!]!.night;
+    expect(night.mefaked_haml).not.toContain('Lead503');
+  });
 });

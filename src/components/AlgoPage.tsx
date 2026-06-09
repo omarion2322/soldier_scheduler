@@ -20,6 +20,11 @@ const SLOT_LABEL_HE: Record<ShiftSlot, string> = {
   night: 'לילה (22–06)',
 };
 
+const EMERGENCY_NIGHT_LEAD_PHONES = ['503055054', '527033764'] as const;
+const REQUIRED_PARTNER_BY_LEAD_PHONE: Record<string, string> = {
+  '503055054': '527033764',
+};
+
 function emptyAssignmentsFor(days: string[]): WeekAssignments {
   const out: WeekAssignments = {};
   for (const d of days) {
@@ -77,6 +82,7 @@ function AlgoPageInner() {
   const [info, setInfo] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [allowMefakedAsSambatz, setAllowMefakedAsSambatz] = useState(true);
+  const [allowEmergencyNightLeads, setAllowEmergencyNightLeads] = useState(false);
 
   // Loads (or reloads) the data for the currently selected week. When
   // `resetWorkInProgress` is true, the in-progress schedule + prev-day
@@ -131,6 +137,24 @@ function AlgoPageInner() {
     for (const s of submissions) m.set(s.name, s);
     return m;
   }, [submissions]);
+
+  const submissionsByPhone = useMemo(() => {
+    const m = new Map<string, Submission>();
+    for (const s of submissions) m.set(s.phone, s);
+    return m;
+  }, [submissions]);
+
+  const emergencyNightLeadNames = useMemo(() => {
+    const out: string[] = [];
+    for (const phone of EMERGENCY_NIGHT_LEAD_PHONES) {
+      const name = submissionsByPhone.get(phone)?.name?.trim();
+      if (name) out.push(name);
+    }
+    return out;
+  }, [submissionsByPhone]);
+
+  const requiredLeadName = submissionsByPhone.get('503055054')?.name?.trim() ?? '';
+  const requiredPartnerName = submissionsByPhone.get('527033764')?.name?.trim() ?? '';
 
   const countsByPhone = useMemo(() => {
     const out: Record<string, number> = {};
@@ -211,6 +235,11 @@ function AlgoPageInner() {
         locked: assignments,
         priorShifts,
         allowMefakedAsSambatz,
+        emergencyNightLead: {
+          enabled: allowEmergencyNightLeads,
+          allowedSambatzPhones: [...EMERGENCY_NIGHT_LEAD_PHONES],
+          requiredPartnerByLeadPhone: REQUIRED_PARTNER_BY_LEAD_PHONE,
+        },
       });
       setAssignments(res.assignments);
       setWarnings(res.warnings);
@@ -267,6 +296,20 @@ function AlgoPageInner() {
     setSaving(true);
     setError(null);
     try {
+      // Hard rule: when 503055054 leads night as mefaked_haml, 527033764 must
+      // be in the same night slot as sambatz.
+      if (requiredLeadName && requiredPartnerName) {
+        for (const d of week.days) {
+          const night = assignments[d]?.night;
+          if (!night) continue;
+          if (night.mefaked_haml.includes(requiredLeadName) && !night.sambatz.includes(requiredPartnerName)) {
+            setError(`אי אפשר לשמור: אם ${requiredLeadName} מוביל/ה בלילה כמפקד/ת חמ"ל, ${requiredPartnerName} חייב/ת להיות סמב"צ באותה משמרת.`);
+            setSaving(false);
+            return;
+          }
+        }
+      }
+
       const result = await saveAlgoResult({
         weekStart: week.start,
         assignments: toDtoAssignments(assignments, week.days),
@@ -442,6 +485,18 @@ function AlgoPageInner() {
           />
           להשתמש במפקדים כסמב״צים
         </label>
+        <label
+          className="flex cursor-pointer select-none items-center gap-2 self-center rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
+          title="כשמסומן, רק המספרים 503055054 ו-527033764 יכולים למלא חוסר מפקד חמ״ל במשמרת לילה. אם 503055054 מוביל/ה — 527033764 מחויב/ת להיות הסמב״צ בן/בת הזוג באותה משמרת."
+        >
+          <input
+            type="checkbox"
+            checked={allowEmergencyNightLeads}
+            onChange={(e) => setAllowEmergencyNightLeads(e.target.checked)}
+            className="h-4 w-4 accent-slate-900"
+          />
+          לאפשר סמב״צים ייעודיים כמפקדי לילה
+        </label>
         <div className="ml-auto self-center text-xs text-slate-600">
           {submissions.length} חיילים הגישו השבוע
         </div>
@@ -520,7 +575,11 @@ function AlgoPageInner() {
                         <SlotCellEditor
                           names={block.mefaked_haml}
                           slots={Math.max(demand.m, block.mefaked_haml.length)}
-                          options={mefakedNames}
+                          options={
+                            slot === 'night' && allowEmergencyNightLeads
+                              ? Array.from(new Set([...mefakedNames, ...emergencyNightLeadNames]))
+                              : mefakedNames
+                          }
                           date={d}
                           slot={slot}
                           submissionsByName={submissionsByName}

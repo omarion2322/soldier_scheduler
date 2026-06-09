@@ -35,6 +35,12 @@ export interface PrevDayAssignments {
   night: SlotAssignment;
 }
 
+export interface EmergencyNightLeadPolicy {
+  enabled: boolean;
+  allowedSambatzPhones: string[];
+  requiredPartnerByLeadPhone?: Record<string, string>;
+}
+
 export interface SchedulerInput {
   days: string[];
   soldiers: SchedulerSoldier[];
@@ -60,6 +66,14 @@ export interface SchedulerInput {
    * מפקד.
    */
   allowMefakedAsSambatz?: boolean;
+  /**
+   * Optional emergency rule for night shifts: when enabled, only these
+   * sambatz phones may fill missing night mefaked_haml slots.
+   *
+   * `requiredPartnerByLeadPhone` can enforce a specific sambatz partner when
+   * a given lead phone is placed as night mefaked_haml.
+   */
+  emergencyNightLead?: EmergencyNightLeadPolicy;
 }
 
 export interface UnfilledSlot {
@@ -140,8 +154,21 @@ function buildPhoneByName(soldiers: SchedulerSoldier[]): Map<string, string> {
  *   c. Slot left under-filled.
  */
 export function generateSchedule(input: SchedulerInput): SchedulerResult {
-  const { days, soldiers, prevDay, locked, priorShifts, allowMefakedAsSambatz } = input;
+  const {
+    days,
+    soldiers,
+    prevDay,
+    locked,
+    priorShifts,
+    allowMefakedAsSambatz,
+    emergencyNightLead,
+  } = input;
   const allowMefakedSwap = allowMefakedAsSambatz !== false;
+  const emergencyAllowed = new Set(
+    (emergencyNightLead?.allowedSambatzPhones ?? []).map((p) => p.trim()).filter((p) => p.length > 0),
+  );
+  const emergencyEnabled = Boolean(emergencyNightLead?.enabled) && emergencyAllowed.size > 0;
+  const requiredPartnerByLead = emergencyNightLead?.requiredPartnerByLeadPhone ?? {};
   const assignments = cloneAssignmentsFor(days, locked);
   const counts: Record<string, number> = {};
   const takenIndices: Record<string, number[]> = {};
@@ -270,6 +297,11 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
       const lockedSambatz = existing.sambatz.length;
       const needMefaked = Math.max(0, demand.mefaked - lockedMefaked);
       const needSambatz = Math.max(0, demand.sambatz - lockedSambatz);
+      const lockedSambatzPhones = new Set(
+        existing.sambatz
+          .map((name) => phoneByName.get(name.trim()))
+          .filter((phone): phone is string => typeof phone === 'string' && phone.length > 0),
+      );
 
       // 1. Mefaked (strict → relaxed).
       const mefakedPick = pick(date, slot, 'mefaked_haml', shiftIndex, needMefaked, taken);
@@ -279,7 +311,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
       }
 
       // 2. Sambatz.
-      const sambatzPick = pick(date, slot, 'sambatz', shiftIndex, needSambatz, taken);
+      let sambatzPick = pick(date, slot, 'sambatz', shiftIndex, needSambatz, taken);
       sambatzPick.phones.forEach((p) => taken.add(p));
       if (sambatzPick.usedRelaxedGap) {
         warnings.push(`${date} ${slot}: relaxed rest gap to 1 shift for סמב"צ.`);
@@ -291,19 +323,80 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
       // 3. Composition swap: missing mefaked -> use a sambatz.
       const swappedToMefaked: string[] = [];
       if (mefakedFilled < demand.mefaked) {
-        const extra = pick(
-          date,
-          slot,
-          'sambatz',
-          shiftIndex,
-          demand.mefaked - mefakedFilled,
-          taken,
-        );
-        extra.phones.forEach((p) => taken.add(p));
-        if (extra.phones.length > 0) {
-          warnings.push(`${date} ${slot}: filled מפקד חמ"ל slot(s) with סמב"צ (composition swap).`);
-          swappedToMefaked.push(...extra.phones);
-          mefakedFilled += extra.phones.length;
+        const missingMefaked = demand.mefaked - mefakedFilled;
+        const useEmergencyNightRule = slot === 'night' && emergencyEnabled;
+
+        if (useEmergencyNightRule) {
+          let candidates = eligible(date, slot, 'sambatz', shiftIndex, STRICT_GAP, taken)
+            .filter((s) => emergencyAllowed.has(s.phone));
+          let usedRelaxedGap = false;
+          if (candidates.length < missingMefaked) {
+            const relaxed = eligible(date, slot, 'sambatz', shiftIndex, RELAXED_GAP, taken)
+              .filter((s) => emergencyAllowed.has(s.phone));
+            if (relaxed.length > candidates.length) {
+              candidates = relaxed;
+              usedRelaxedGap = true;
+            }
+          }
+
+          let forcedNightPartner: string | null = null;
+          let forcedPartnerUsesRelaxedGap = false;
+          for (const c of candidates) {
+            if (swappedToMefaked.length >= missingMefaked) break;
+            const partnerPhone = requiredPartnerByLead[c.phone];
+            if (partnerPhone) {
+              if (!lockedSambatzPhones.has(partnerPhone)) {
+                // Night requires exactly one sambatz; if it's already locked to
+                // someone else, this lead cannot be used.
+                if (lockedSambatz >= demand.sambatz) continue;
+                const partnerSoldier = soldiersByPhone.get(partnerPhone);
+                if (!partnerSoldier || partnerSoldier.position !== 'sambatz') continue;
+                const partnerDay = partnerSoldier.availability[date];
+                if (!partnerDay || partnerDay[slot] !== 'can') continue;
+                if (!gapOk(partnerPhone, shiftIndex, RELAXED_GAP)) continue;
+                forcedNightPartner = partnerPhone;
+                forcedPartnerUsesRelaxedGap = !gapOk(partnerPhone, shiftIndex, STRICT_GAP);
+              }
+            }
+            swappedToMefaked.push(c.phone);
+            taken.add(c.phone);
+          }
+
+          if (swappedToMefaked.length > 0) {
+            warnings.push(`${date} ${slot}: filled מפקד חמ"ל slot(s) with allowed סמב"צ night lead(s).`);
+            mefakedFilled += swappedToMefaked.length;
+            if (usedRelaxedGap) {
+              warnings.push(`${date} ${slot}: relaxed rest gap to 1 shift for emergency night lead.`);
+            }
+
+            // Enforce a required partner in the sambatz slot for this night.
+            if (forcedNightPartner && !lockedSambatzPhones.has(forcedNightPartner)) {
+              const previous = sambatzPick.phones.slice();
+              previous.forEach((p) => taken.delete(p));
+              sambatzPick = {
+                phones: [forcedNightPartner],
+                usedRelaxedGap: sambatzPick.usedRelaxedGap || forcedPartnerUsesRelaxedGap,
+              };
+              sambatzPick.phones.forEach((p) => taken.add(p));
+              sambatzFilled = lockedSambatz + sambatzPick.phones.length;
+              warnings.push(`${date} ${slot}: enforced required sambatz partner for emergency night lead.`);
+            }
+          }
+        } else {
+          const extra = pick(
+            date,
+            slot,
+            'sambatz',
+            shiftIndex,
+            missingMefaked,
+            taken,
+          );
+          extra.phones.forEach((p) => taken.add(p));
+          if (extra.phones.length > 0) {
+            warnings.push(`${date} ${slot}: filled מפקד חמ"ל slot(s) with סמב"צ (composition swap).`);
+            swappedToMefaked.push(...extra.phones);
+            mefakedFilled += extra.phones.length;
+          }
         }
       }
 
