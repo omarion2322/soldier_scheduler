@@ -44,6 +44,8 @@ const WEEK_REALIGN_ISO = '2026-06-14';
 const FIXED_HEADERS = ['submittedAt', 'phone', 'name', 'position', 'weekStart'];
 const SLOTS = ['morning', 'afternoon', 'night'];
 const TRAILING_HEADERS = ['atHomeDays', 'reasons'];
+const EMERGENCY_NIGHT_LEAD_PHONES = ['503055054', '527033764'];
+const REQUIRED_NIGHT_PARTNER_BY_LEAD = { '503055054': '527033764' };
 
 const POSITION_LABELS_HE = { mefaked_haml: 'מפקד חמ״ל', sambatz: 'סמב״צ' };
 const SHIFT_TIME_LABELS = {
@@ -1060,6 +1062,35 @@ function readPrevDayForWeek_(weekStart) {
   return { morning: morning, afternoon: afternoon, night: night };
 }
 
+function validateNightLeadPartnerRule_(weekStart, assignments) {
+  // If 503055054 is assigned as night mefaked_haml, require 527033764 in
+  // the same night's sambatz list.
+  const subs = readAllSubmissions_(weekStart);
+  const nameByPhone = {};
+  subs.forEach(function (s) {
+    const p = canonPhone_(s.phone || '');
+    const n = String(s.name || '').trim();
+    if (p && n) nameByPhone[p] = n;
+  });
+  const leadPhone = EMERGENCY_NIGHT_LEAD_PHONES[0];
+  const leadName = nameByPhone[leadPhone] || '';
+  const partnerPhone = REQUIRED_NIGHT_PARTNER_BY_LEAD[leadPhone] || '';
+  const partnerName = partnerPhone ? (nameByPhone[partnerPhone] || '') : '';
+  if (!leadName || !partnerName) return '';
+
+  const days = weekDaysFor_(weekStart);
+  for (let i = 0; i < days.length; i += 1) {
+    const d = days[i];
+    const night = (assignments[d] || {}).night || { mefaked_haml: [], sambatz: [] };
+    const mefaked = night.mefaked_haml || [];
+    const sambatz = night.sambatz || [];
+    if (mefaked.indexOf(leadName) !== -1 && sambatz.indexOf(partnerName) === -1) {
+      return 'invalid_night_partner';
+    }
+  }
+  return '';
+}
+
 function handleAlgoSave_(body) {
   const weekStart = String(body.weekStart || '');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || !weekIndexFor_(weekStart)) {
@@ -1069,6 +1100,10 @@ function handleAlgoSave_(body) {
     return jsonResponse_({ ok: false, reason: 'locked' });
   }
   const assignments = body.assignments || {};
+  const partnerRuleViolation = validateNightLeadPartnerRule_(weekStart, assignments);
+  if (partnerRuleViolation) {
+    return jsonResponse_({ ok: false, reason: 'invalid', error: partnerRuleViolation });
+  }
 
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
@@ -1277,12 +1312,30 @@ function readOverallHeaders_(sh) {
   return row;
 }
 
+/** Normalises a header cell value to an ISO date string.
+ *  Google Sheets may deserialise "2026-05-28" back as a Date object;
+ *  this converts that back to the canonical YYYY-MM-DD form so we can
+ *  match it reliably without creating duplicate columns on re-save. */
+function headerToIso_(v) {
+  if (v instanceof Date) {
+    const y = v.getUTCFullYear();
+    const m = String(v.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(v.getUTCDate()).padStart(2, '0');
+    return y + '-' + m + '-' + d;
+  }
+  return String(v);
+}
+
 function findOrAppendWeekColumn_(sh, headers, weekStart) {
   for (let i = OVERALL_FIXED_HEADERS.length; i < headers.length; i += 1) {
-    if (String(headers[i]) === weekStart) return i + 1; // 1-based column
+    if (headerToIso_(headers[i]) === weekStart) return i + 1; // 1-based column
   }
   const col = headers.length + 1;
-  sh.getRange(1, col).setValue(weekStart).setFontWeight('bold');
+  // Force plain-text format so Sheets never auto-converts the ISO date
+  // string to a Date, which would break the match on a subsequent save.
+  const cell = sh.getRange(1, col);
+  cell.setNumberFormat('@STRING@');
+  cell.setValue(weekStart).setFontWeight('bold');
   headers.push(weekStart);
   return col;
 }
@@ -1413,7 +1466,7 @@ function readPriorShiftsExcluding_(weekStart) {
   const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0];
   let weekColIdx = -1;
   for (let i = OVERALL_FIXED_HEADERS.length; i < headers.length; i += 1) {
-    if (String(headers[i]) === weekStart) { weekColIdx = i; break; }
+    if (headerToIso_(headers[i]) === weekStart) { weekColIdx = i; break; }
   }
   const values = sh.getRange(2, 1, sh.getLastRow() - 1, lastCol).getValues();
   const out = {};
