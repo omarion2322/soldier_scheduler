@@ -27,6 +27,8 @@
  *   Add a tab named "locks" to the spreadsheet. Column A header: weekStart.
  *   Each subsequent row holds a Tuesday YYYY-MM-DD that should be read-only.
  *   The script creates this tab automatically on first request if missing.
+ *   A locked week only blocks soldier submissions (the public submission
+ *   page); the /algo page can still save its computed schedule.
  */
 
 const SHEET_ID = '1RQEXiMVyHqXV75j_gm0qT_1QobtC-TtNrwDxCYxyf2Q';
@@ -1096,9 +1098,8 @@ function handleAlgoSave_(body) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart) || !weekIndexFor_(weekStart)) {
     return jsonResponse_({ ok: false, reason: 'invalid' });
   }
-  if (isWeekLocked_(weekStart)) {
-    return jsonResponse_({ ok: false, reason: 'locked' });
-  }
+  // Note: a locked week only blocks soldier submissions (see doPost). The
+  // /algo page can still save its computed schedule for locked weeks.
   const assignments = body.assignments || {};
   const partnerRuleViolation = validateNightLeadPartnerRule_(weekStart, assignments);
   if (partnerRuleViolation) {

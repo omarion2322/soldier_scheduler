@@ -213,14 +213,22 @@ function AlgoPageInner() {
   const handleSync = async () => {
     if (syncing || loading) return;
     setSyncing(true);
-    const ok = await loadWeek(false);
-    setSyncing(false);
-    if (ok) {
+    setError(null);
+    try {
+      // Sync only refreshes Week N availability (who can/can't — the 1/0
+      // values). It intentionally leaves prev-day entries, the prior-shifts
+      // ledger, and the in-progress assignment grid untouched.
+      const subs = await fetchWeekSubmissions(week.start);
+      setSubmissions(subs);
       const now = new Date();
       const hh = String(now.getHours()).padStart(2, '0');
       const mm = String(now.getMinutes()).padStart(2, '0');
       const ss = String(now.getSeconds()).padStart(2, '0');
       setInfo(`הנתונים סונכרנו מהגיליון (${hh}:${mm}:${ss}).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncing(false);
     }
   };
 
