@@ -1,6 +1,9 @@
 export type ShiftSlot = 'morning' | 'afternoon' | 'night';
 export type ShiftState = 'can' | 'cant';
-export type Position = 'sambatz' | 'mefaked_haml';
+// 'both' is an admin-only position (set manually on the sheet) for soldiers
+// who can serve as either a mefaked_haml or a sambatz. It is intentionally
+// absent from POSITIONS so it is never offered in the public submission form.
+export type Position = 'sambatz' | 'mefaked_haml' | 'both';
 
 export const POSITIONS: readonly Position[] = ['sambatz', 'mefaked_haml'] as const;
 
