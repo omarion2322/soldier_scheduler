@@ -15,7 +15,7 @@ function availability(days: string[], states?: Partial<Record<string, DayShifts>
 function makeSoldier(
   phone: string,
   name: string,
-  position: 'mefaked_haml' | 'sambatz',
+  position: 'mefaked_haml' | 'sambatz' | 'both',
   days: string[],
   states?: Partial<Record<string, DayShifts>>,
 ): SchedulerSoldier {
@@ -87,6 +87,37 @@ describe('generateSchedule', () => {
     const res = generateSchedule({ days: DAYS, soldiers, prevDay: null });
     // We expect a relaxed-gap warning since S1 must repeat with shorter gap.
     expect(res.warnings.some((w) => /relaxed rest gap/.test(w))).toBe(true);
+  });
+
+  it('lets a "both" soldier fill either a mefaked_haml or a sambatz slot', () => {
+    const DAY = ['2026-05-28'];
+
+    // As mefaked_haml: only a "both" soldier is available for the lead role.
+    const asMefaked = generateSchedule({
+      days: DAY,
+      soldiers: [
+        makeSoldier('b1', 'Both1', 'both', DAY),
+        makeSoldier('s1', 'S1', 'sambatz', DAY),
+        makeSoldier('s2', 'S2', 'sambatz', DAY),
+      ],
+      prevDay: null,
+    });
+    expect(asMefaked.assignments['2026-05-28']!.morning.mefaked_haml).toContain('Both1');
+    // The lead came from a genuine "both" soldier, not a composition swap.
+    expect(asMefaked.warnings.some((w) => /composition swap/.test(w))).toBe(false);
+
+    // As sambatz: only a "both" soldier is available for the sambatz role.
+    // ('a_m1' sorts before 'b1' so the dedicated mefaked takes the lead role.)
+    const asSambatz = generateSchedule({
+      days: DAY,
+      soldiers: [
+        makeSoldier('a_m1', 'M1', 'mefaked_haml', DAY),
+        makeSoldier('b1', 'Both1', 'both', DAY),
+      ],
+      prevDay: null,
+      allowMefakedAsSambatz: false,
+    });
+    expect(asSambatz.assignments['2026-05-28']!.morning.sambatz).toContain('Both1');
   });
 
   it('honors prev-day assignments by blocking the same soldier in early shifts', () => {

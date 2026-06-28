@@ -240,7 +240,8 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
   ): SchedulerSoldier[] {
     const out: SchedulerSoldier[] = [];
     for (const s of soldiers) {
-      if (s.position !== position) continue;
+      // A 'both' soldier is eligible for either role.
+      if (s.position !== position && s.position !== 'both') continue;
       if (excludedPhones.has(s.phone)) continue;
       const day = s.availability[date];
       if (!day || day[slot] !== 'can') continue;
@@ -350,7 +351,7 @@ export function generateSchedule(input: SchedulerInput): SchedulerResult {
                 // someone else, this lead cannot be used.
                 if (lockedSambatz >= demand.sambatz) continue;
                 const partnerSoldier = soldiersByPhone.get(partnerPhone);
-                if (!partnerSoldier || partnerSoldier.position !== 'sambatz') continue;
+                if (!partnerSoldier || (partnerSoldier.position !== 'sambatz' && partnerSoldier.position !== 'both')) continue;
                 const partnerDay = partnerSoldier.availability[date];
                 if (!partnerDay || partnerDay[slot] !== 'can') continue;
                 if (!gapOk(partnerPhone, shiftIndex, RELAXED_GAP)) continue;

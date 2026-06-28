@@ -649,12 +649,14 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
       const r = latestByPhone[p].row;
       const name = String(r[2] || '').trim();
       const position = String(r[3] || '').trim();
-      if (!name || positions.indexOf(position) === -1) return;
+      if (!name || (positions.indexOf(position) === -1 && position !== 'both')) return;
+      // A 'both' soldier appears in both the מפקד חמ"ל and the סמב"צ columns.
+      const effPositions = position === 'both' ? ['mefaked_haml', 'sambatz'] : [position];
       days.forEach(function (d, dayIdx) {
         SLOTS.forEach(function (slot, slotIdx) {
           const v = String(r[FIXED + dayIdx * SLOTS.length + slotIdx]).trim();
           if (v === '1' || v === 'can') {
-            avail[d][slot][position].push(name);
+            effPositions.forEach(function (pos) { avail[d][slot][pos].push(name); });
           }
         });
       });
@@ -668,7 +670,9 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
       atHomeDays.forEach(function (d) {
         if (!unavail[d]) return;
         SLOTS.forEach(function (slot) {
-          unavail[d][slot][position].push({ name: name, reason: 'בבית' });
+          effPositions.forEach(function (pos) {
+            unavail[d][slot][pos].push({ name: name, reason: 'בבית' });
+          });
         });
       });
 
@@ -683,7 +687,11 @@ function rebuildShiftsTab_(dataSheet, weekStart) {
             if (!dayObj || typeof dayObj !== 'object') return;
             SLOTS.forEach(function (slot) {
               const txt = String(dayObj[slot] == null ? '' : dayObj[slot]).trim();
-              if (txt) unavail[d][slot][position].push({ name: name, reason: txt });
+              if (txt) {
+                effPositions.forEach(function (pos) {
+                  unavail[d][slot][pos].push({ name: name, reason: txt });
+                });
+              }
             });
           });
         }
@@ -962,7 +970,7 @@ function readAllSubmissions_(weekStart) {
   Object.keys(latestByPhone).forEach(function (phone) {
     const r = latestByPhone[phone].row;
     const position = String(r[3] || '').trim();
-    if (position !== 'mefaked_haml' && position !== 'sambatz') return;
+    if (position !== 'mefaked_haml' && position !== 'sambatz' && position !== 'both') return;
     const shifts = {};
     days.forEach(function (d, dayIdx) {
       const cells = {};

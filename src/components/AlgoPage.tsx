@@ -125,11 +125,19 @@ function AlgoPageInner() {
     [submissions],
   );
   const mefakedNames = useMemo(
-    () => submissions.filter((s) => s.position === 'mefaked_haml').map((s) => s.name).sort(),
+    () =>
+      submissions
+        .filter((s) => s.position === 'mefaked_haml' || s.position === 'both')
+        .map((s) => s.name)
+        .sort(),
     [submissions],
   );
   const sambatzNames = useMemo(
-    () => submissions.filter((s) => s.position === 'sambatz').map((s) => s.name).sort(),
+    () =>
+      submissions
+        .filter((s) => s.position === 'sambatz' || s.position === 'both')
+        .map((s) => s.name)
+        .sort(),
     [submissions],
   );
   const submissionsByName = useMemo(() => {
@@ -639,7 +647,11 @@ function AlgoPageInner() {
                   <tr key={s.phone}>
                     <td className="border border-slate-200 p-2">{s.name}</td>
                     <td className="border border-slate-200 p-2">
-                      {s.position === 'mefaked_haml' ? 'מפקד חמ"ל' : 'סמב"צ'}
+                      {s.position === 'mefaked_haml'
+                        ? 'מפקד חמ"ל'
+                        : s.position === 'sambatz'
+                          ? 'סמב"צ'
+                          : 'מפקד חמ"ל / סמב"צ'}
                     </td>
                     <td className="border border-slate-200 p-2 text-slate-500">{prior}</td>
                     <td className="border border-slate-200 p-2">{here}</td>
